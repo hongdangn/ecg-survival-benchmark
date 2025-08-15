@@ -105,5 +105,5 @@ We tried to make data processing flexible: inputs in the N-H (single-channel tim
 
 ## See Also
 
-[ArXiv link here]
+https://arxiv.org/abs/2406.17002
 
