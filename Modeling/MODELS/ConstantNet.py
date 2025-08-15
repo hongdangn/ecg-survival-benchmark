@@ -19,12 +19,12 @@ def get_ConstantNet_model(const_value):
              
 # %% image processing
 def Adjust_Image(single_image):
-    # single_image = torch.transpose(single_image, 1,2)
+    single_image = torch.transpose(single_image, 1,2)
     return single_image[0] # Just chan x leng, so 12 x 4k
 
 def Adjust_Many_Images(image_batch):
     # This function is called after the image_batch is sent to GPU
-    # image_batch = torch.transpose(image_batch[:,0,:,:],1,2) # This model wants data N-Chan-Len
+    image_batch = torch.transpose(image_batch[:,0,:,:],1,2) # This model wants data N-Chan-Len
     return image_batch
 
 def get_ConstantNet_process_single_image():

@@ -74,12 +74,38 @@ from MODELS.ECGTransForm import get_Transformer_process_multi_image
 from pycox.models import loss as pycox_loss
 from pycox.models.data import pair_rank_mat
 
-def deephit_loss(scores, labels, censors):
-    rank_mat = pair_rank_mat(labels.cpu().numpy(), censors.cpu().numpy())
-    rank_mat = torch.from_numpy(rank_mat)
-    rank_mat = rank_mat.to('cuda')
+# Original; 6.44ms for 64 values
+# def deephit_loss(scores, labels, censors):
+#     start = time.time()
+#     rank_mat = pair_rank_mat(labels.cpu().numpy(), censors.cpu().numpy())
+#     rank_mat = torch.from_numpy(rank_mat)
+#     rank_mat = rank_mat.to('cuda')
+#     loss_single = pycox_loss.DeepHitSingleLoss(0.2, 0.1)
+#     loss = loss_single(scores, labels, censors, rank_mat)
+#     return loss
+
+# modified; tested to be equivalent on 10k random 512-length values
+# 1.37ms for 64 values
+def deephit_loss(scores, TTE, E):
+    TTE = TTE.reshape(-1)
+    E = E.reshape(-1)
+    
+    # i refers to row, j refers to column. 
+    # Ei == 0 -> 0
+    # Ei ==1, Ej == 0 and TTEi==TTEj -> 1
+    # Ei ==1, TTEi < TTEj -> 1
+    
+    E_i_1 = torch.unsqueeze(E==1,1).repeat(1,E.shape[0]) # is Ei 1? 
+    E_j_0 = torch.unsqueeze(E==0,0).repeat(E.shape[0],1) # is Ej 0?
+    TTE_i = torch.unsqueeze(TTE,1).repeat(1,E.shape[0]) # TTEi
+    TTE_j = torch.unsqueeze(TTE,0).repeat(E.shape[0],1) # TTEj
+    
+    a = torch.mul(torch.mul(E_i_1,torch.eq(TTE_i,TTE_j)), E_j_0)
+    b = torch.mul(E_i_1,torch.lt(TTE_i,TTE_j))
+    rank_mat = a+b # is bool on CUDA
+
     loss_single = pycox_loss.DeepHitSingleLoss(0.2, 0.1)
-    loss = loss_single(scores, labels, censors, rank_mat)
+    loss = loss_single(scores, TTE, E, rank_mat)
     return loss
 
 # %% Datasets, Samplers, and Collate functions
@@ -186,7 +212,7 @@ class Dataset_FuncList(torch.utils.data.Dataset):
             x = torch.clone(x)
             for k in self.func_list:
                 x = k(x)
-                
+                   
         if (self.has_covariates):
             z = self.Covariates[index] # let's include covariates just like this
         else:
@@ -577,6 +603,27 @@ class GenericModelDeepSurvival(GenericModel):
         else:
             print("NO scheduler loaded")
         self.Load_Random_State(Import_Dict)
+        
+    def Load_No_RS(self, best_or_last):
+        # Only for salience maps
+        print('\nTHIS LOAD OPTIONS DOES NOT LOAD RANDOM SEED\n')
+        
+        Import_Dict = self.Load_Checkpoint(best_or_last)   
+        self.Load_Training_Params(Import_Dict)
+        self.Load_Training_Progress(Import_Dict)
+        self.Load_Normalization(Import_Dict) # we're frontloading normalization, so that doesn't matter
+
+        self.model.load_state_dict(Import_Dict['model_state_dict'])
+        
+        if ('optimizer_state_dict' in Import_Dict.keys()):
+            self.optimizer.load_state_dict(Import_Dict['optimizer_state_dict'])
+        else:
+            print('NO optimizer loaded')
+        if ('scheduler_state_dict' in Import_Dict.keys()):
+            self.scheduler.load_state_dict(Import_Dict['scheduler_state_dict'])
+        else:
+            print("NO scheduler loaded")
+        # self.Load_Random_State(Import_Dict)
 
     # %%  save out the outputs at the -1'st layer of the model
     def Get_Features_Out(self, Which_Dataloader = 'Test'):

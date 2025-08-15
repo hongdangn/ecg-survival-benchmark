@@ -2,7 +2,9 @@
 """
 Written by Mingxuan Liu
 (minor modifications: PVL)
-# 09/12/24L discharge time no longer records admit time (only affects multimodal)
+# 09/12/24 discharge time no longer records admit time (only affects multimodal)
+# 01/14/25 TTE is no longer (max ECG + 365) if (max ECG) > max(Discharge+365)
+# ... instead is max(Discharge+365, max_ECG)
 """
 
 # %% Imports
@@ -17,24 +19,24 @@ import os
 
 # %% Data paths
 
-patient_csv_dir = "/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimiciv/2.2/hosp/patients.csv.gz"
-# patient_csv_dir = os.path.join(os.getcwd(), 'MIMIC IV', 'patients.csv.gz')
+# patient_csv_dir = "/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimiciv/2.2/hosp/patients.csv.gz"
+patient_csv_dir = os.path.join(os.getcwd(), 'MIMIC IV', 'patients.csv.gz')
 
-admission_csv_dir = "/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimiciv/2.2/hosp/admissions.csv.gz"
-# admission_csv_dir = os.path.join(os.getcwd(), 'MIMIC IV', 'admissions.csv.gz')
+# admission_csv_dir = "/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimiciv/2.2/hosp/admissions.csv.gz"
+admission_csv_dir = os.path.join(os.getcwd(), 'MIMIC IV', 'admissions.csv.gz')
 
-dat_ecg = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/machine_measurements.csv")
-# dat_ecg = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "machine_measurements.csv"))
+# dat_ecg = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/machine_measurements.csv")
+dat_ecg = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "machine_measurements.csv"))
 
-dat_record = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/record_list.csv")
-# dat_record = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "record_list.csv"))
+# dat_record = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/record_list.csv")
+dat_record = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "record_list.csv"))
 
 
-dat_dic = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/machine_measurements_data_dictionary.csv")
-# dat_dic = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "machine_measurements_data_dictionary.csv"))
+# dat_dic = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/machine_measurements_data_dictionary.csv")
+dat_dic = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "machine_measurements_data_dictionary.csv"))
 
-dat_note = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/waveform_note_links.csv")
-# dat_note = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "waveform_note_links.csv"))
+# dat_note = pd.read_csv("/lab-share/CHIP-Lacava-e2/Public/physionet.org/files/mimic-iv-ecg/1.0/waveform_note_links.csv")
+dat_note = pd.read_csv(os.path.join(os.getcwd(), 'MIMIC IV', "waveform_note_links.csv"))
 
 
 # %% Extract DoD from patients table
@@ -201,23 +203,80 @@ print(f"the maximum ecg follow-up time in year:{np.max(tmp_ecg_followup)}")
 #  the ED and ICU. This means that the timestamps for those ECGs won't overlap with data from 
 #  the MIMIC-IV Clinical Database."
 
-dat["time_to_event"] = [dat.loc[i, "max_disch_time"] - dat.loc[i, "ecg_time"] + timedelta(days=365) if pd.isna(dat.loc[i, "dod"]) else dod_followup[i] for i in range(dat.shape[0])] 
-dat["time_to_event"] = [dat["max_ecg_time"][i] - dat["ecg_time"][i] + timedelta(days=365) if pd.isna(dat["time_to_event"][i]) or dat["time_to_event"][i].days < 0 else dat["time_to_event"][i] for i in range(dat.shape[0])] 
-dat["time_to_event"] = [t.days for t in dat["time_to_event"]]
+
+# Calculate TTE. 
+# modified PVL 01/15/25. 
+tte = []
+for e_t, m_d_t, m_e_t, dod, dfu in zip(dat['ecg_time'],dat['max_disch_time'],dat['max_ecg_time'], dat['dod'], dod_followup):
+    
+    # if date of death is known, use that followup time
+    if (pd.isna(dfu) == False):
+        temp_tte = dfu
+        
+    # otherwise, if never discharged, use time to last ECG time
+    elif (pd.isna(m_d_t)):
+        temp_tte = m_e_t - e_t
+    
+    # if discharged at some point and death date unknown, use time to max (max_ECG_T, Disch+365)
+    else:
+        ref_time = max(m_d_t + timedelta(days=365), m_e_t)
+        temp_tte = ref_time - e_t
+
+    tte.append(temp_tte.days ) # store in days    
+
+dat["time_to_event"] = tte
+
+# prev:
+# dat["time_to_event"] = [dat.loc[i, "max_disch_time"] - dat.loc[i, "ecg_time"] + timedelta(days=365) if pd.isna(dat.loc[i, "dod"]) else dod_followup[i] for i in range(dat.shape[0])] 
+# dat["time_to_event"] = [dat["max_ecg_time"][i] - dat["ecg_time"][i] + timedelta(days=365) if pd.isna(dat["time_to_event"][i]) or dat["time_to_event"][i].days < 0 else dat["time_to_event"][i] for i in range(dat.shape[0])] 
+# dat["time_to_event"] = [t.days for t in dat["time_to_event"]]
 
 print(f"the maximum time-to-event in year is: {(dat['time_to_event'] /365).max()}")
 (dat["time_to_event"] /365).hist(bins=200)
 
-tmp_0 = dat.loc[dat["time_to_event"] == 0, :]
+tmp_0 = dat.loc[dat["time_to_event"] == 0, :] #PVL: ???
 tmp_0.loc[pd.isna(tmp_0["dod"]), ]
+
+# %% 01 14 25 - update AGE
+ages = []
+for i in range (dat.shape[0]):
+    ecg_time = dat["ecg_time"][i]
+    ecg_yr = ecg_time.year
+    
+    anchor_yr = dat["anchor_year"][i]
+    anchor_age = dat["anchor_age"][i]
+    
+    Age = ecg_yr - anchor_yr + anchor_age
+    
+    ages.append(Age)
+    
+dat["Age"] = ages
+    
+# %% PVL: 01 15 25 append ECG order 
+
+# 1. establish an order for the MIMIC dataset per PID. oldest = 0, newest = N, tie to study_ID
+SID_Ord_Dict = {} # dictionary mapping ECG ID to order
+for i,PID in enumerate(np.unique(dat['subject_id'])): # per PID entry
+    PID_entries = dat[dat['subject_id'] == PID]
+    Sorted_Entries = PID_entries.sort_values(by='ecg_time') # use ECG time from the record list, not the machine measures
+    # print(Sorted_Entries['time_to_event']) # sorted oldest to newest
+    for i,SID in enumerate(Sorted_Entries['study_id']):
+        SID_Ord_Dict[SID] = i
+        
+# 2. per study_id on dataframe order, write down the order
+order = []
+for SID in dat['study_id']:
+    order.append(SID_Ord_Dict[SID])
+        
+dat["ECG_Order"] = order
 
 # %% add info on admission start/end time if admitted - PVL 07 29 24. 
 # Takes ~13 min.
 # from tqdm import tqdm
 admit_start = []
 admit_end = []
-# for s_id, ecg_t in tqdm(zip(dat['subject_id'],dat['ecg_time_x']), total = len(dat['subject_id'])):
-for s_id, ecg_t in zip(dat['subject_id'],dat['ecg_time_x']):
+# for s_id, ecg_t in tqdm(zip(dat['subject_id'],dat['ecg_time']), total = len(dat['subject_id'])):
+for s_id, ecg_t in zip(dat['subject_id'],dat['ecg_time']): # use ECG time from the record list (ecg_time), not the machine measures file (ecg_time_x)
     
     inds = (dat_hosp["subject_id"]==s_id)
     
@@ -238,13 +297,9 @@ for s_id, ecg_t in zip(dat['subject_id'],dat['ecg_time_x']):
 dat["admit_time_before_ecg"] = admit_start
 dat["disch_time_after_ecg"] = admit_end
 
-
 # %%
 
-
-
-
-dat.to_csv(os.path.join(os.getcwd(), 'MIMIC IV', "machine_measurements_survival_sept2024.csv"))
+dat.to_csv(os.path.join(os.getcwd(), 'MIMIC IV', "machine_measurements_survival_01152025.csv"))
 
 # import pickle
 # with open('machine_measurements_survival.pkl', 'wb') as file:

@@ -280,13 +280,22 @@ def Load_Labels(args):
         train_labels_B = pd.read_csv(train_csv_path_B)
         train_labels_M = pd.read_csv(train_csv_path_M)
         
+        # Added 06 25 25 6pm
+        # renumber PID numbers: C15 and BCH PIDs overlap, so just negative the C15 ones        
+        train_labels_C['PID'] = -train_labels_C['PID'].values
+        
         train_labels_C['Dataset'] = 'Code15'
         train_labels_B['Dataset'] = 'BCH'
         train_labels_M['Dataset'] = 'MIMICIV'
         
+        # Correct for C15 missing train labels
+        print('C15: Converting Mort_Event to Bool')
+        train_labels_C['Mort_Event'] = train_labels_C['Mort_Event'].values.astype(bool)
+        
         # merge datasets
         train_labels = pd.concat((train_labels_C,train_labels_B,train_labels_M)).reset_index(drop=True) # without reset, index = 0,0,0,1,1,1,etc.
         train_rows = train_labels[train_labels['Test_Train_split_12345']=='tr'].index.values
+        
 
     # Just one
     else:
@@ -299,6 +308,13 @@ def Load_Labels(args):
             
         train_labels = pd.read_csv(train_csv_path)
         train_rows = train_labels[train_labels['Test_Train_split_12345']=='tr'].index.values
+        
+        # Correct for C15 missing train labels
+        if (args['Train_Folder'] == 'Code15'):
+            print('C15: Converting Mort_Event to Bool')
+            train_labels['Mort_Event'] = train_labels['Mort_Event'].values.astype(bool)
+         # Account for C15/BCH PID overlap by -1*PID here so we stil check against overlap with test set
+            train_labels['PID'] = -train_labels['PID'].values
 
     # Pull Test Data
     if (args['Test_Folder'] == 'Code15'):
@@ -310,6 +326,13 @@ def Load_Labels(args):
         
     test_labels = pd.read_csv(test_csv_path)
     test_rows  = test_labels[test_labels['Test_Train_split_12345']=='te'].index.values
+    
+    # Correct for C15 missing test labels
+    if (args['Test_Folder'] == 'Code15'):
+        print('C15: Converting Mort_Event to Bool')
+        test_labels['Mort_Event'] = test_labels['Mort_Event'].values.astype(bool)
+    # Account for C15/BCH PID overlap by -1*PID in test set
+        test_labels['PID'] = -test_labels['PID'].values
     
     # 3. split labels into test/train
     train_df  = train_labels.loc[train_rows].copy().reset_index(drop=True)
@@ -337,13 +360,13 @@ def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
     if (args['Train_Folder'] == 'All'):
 
         # Split train/valid df by source (not needed for test set: one at a time there)
-        train_df_C = train_df[train_df['Dataset']=='Code15']
-        train_df_B = train_df[train_df['Dataset']=='BCH']
-        train_df_M = train_df[train_df['Dataset']=='MIMICIV']
+        train_df_C = train_df[train_df['Dataset']=='Code15'].reset_index(drop=True)
+        train_df_B = train_df[train_df['Dataset']=='BCH'].reset_index(drop=True)
+        train_df_M = train_df[train_df['Dataset']=='MIMICIV'].reset_index(drop=True)
         
-        valid_df_C = valid_df[valid_df['Dataset']=='Code15']
-        valid_df_B = valid_df[valid_df['Dataset']=='BCH']
-        valid_df_M = valid_df[valid_df['Dataset']=='MIMICIV']
+        valid_df_C = valid_df[valid_df['Dataset']=='Code15'].reset_index(drop=True)
+        valid_df_B = valid_df[valid_df['Dataset']=='BCH'].reset_index(drop=True)
+        valid_df_M = valid_df[valid_df['Dataset']=='MIMICIV'].reset_index(drop=True)
         
         # Handle Debug Case
         if ('debug' in args.keys()):
@@ -379,7 +402,6 @@ def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
             train_df_C = train_df_C.sort_values(by=["ECG_Row_Num"]).reset_index(drop=True)
             
             # Pull Validation ECG data
-            # ECG_SID_Row  = {SID:i for i,SID in enumerate(f['SID'])} # Which ECG.h5 row corresponds to which SID?
             rows_to_pull = np.array([ECG_SID_Row[SID] for SID in valid_df_C['SID']]) # Find the rows for our dataframe
             valid_ECG.append(f['ECG'][np.sort(rows_to_pull)]) # pull those rows in ascending order (hp5y requirement)
             valid_df_C['ECG_Row_Num'] = rows_to_pull # sort the dataframe in ascending row-pulled order
@@ -397,7 +419,6 @@ def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
             train_df_B = train_df_B.sort_values(by=["ECG_Row_Num"]).reset_index(drop=True)
             
             # Pull Validation ECG data
-            # ECG_SID_Row  = {SID:i for i,SID in enumerate(f['SID'])} # Which ECG.h5 row corresponds to which SID?
             rows_to_pull = np.array([ECG_SID_Row[SID] for SID in valid_df_B['SID']]) # Find the rows for our dataframe
             valid_ECG.append(f['ECG'][np.sort(rows_to_pull)]) # pull those rows in ascending order (hp5y requirement)
             valid_df_B['ECG_Row_Num'] = rows_to_pull # sort the dataframe in ascending row-pulled order
@@ -418,7 +439,6 @@ def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
             train_df_M = train_df_M.sort_values(by=["ECG_Row_Num"]).reset_index(drop=True)
             
             # Pull Validation ECG data
-            # ECG_SID_Row  = {SID:i for i,SID in enumerate(f['SID'])} # Which ECG.h5 row corresponds to which SID?
             rows_to_pull = np.array([ECG_SID_Row[SID] for SID in valid_df_M['SID']]) # Find the rows for our dataframe
             
             # swap the MIMICIV ECG rows here to align with C15
@@ -435,8 +455,8 @@ def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
             # plt.plot( a[:,0]-a[:,1]/2 - a[:,4]) # aVL, [:,4] in C15, is given by I -II/2; this should be roughly 0
             
         # merge the ECG and re-ordered dataframes, del list reference; garbage collector should handle list elements
-        train_df = pd.concat((train_df_C, train_df_B, train_df_M))
-        valid_df = pd.concat((valid_df_C, valid_df_B, valid_df_M))
+        train_df = pd.concat((train_df_C, train_df_B, train_df_M)).reset_index(drop=True)
+        valid_df = pd.concat((valid_df_C, valid_df_B, valid_df_M)).reset_index(drop=True)
         Data['ECG_train'] = np.vstack(train_ECG).astype(np.float32)
         Data['ECG_valid'] = np.vstack(valid_ECG).astype(np.float32)
         del train_ECG
@@ -610,32 +630,77 @@ def Split_Data(train_df):
     TR = 80
     VA = 20
     TE = 00
-    
-    # Per ID, find matching data rows      
-    Subj_IDs = train_df['PID']          
-    Subj_IDs_Unique = np.unique(Subj_IDs)
-    
-    #Speedup 08/14/24. Much faster than repeat calls to np.where()
-    Subj_ID_to_Rows_Dict = {} # Per PID find rows in the numpy array
-    for ind,val in enumerate(Subj_IDs):
-        if val in Subj_ID_to_Rows_Dict.keys():
-            Subj_ID_to_Rows_Dict[val].append(ind)
-        else:
-            Subj_ID_to_Rows_Dict[val] = [ind]
+        
+    # If working with multiple datasets, split each one separately ADDED 06 26 25 5PM
+    if ('Dataset' in train_df.keys()):
+        # 1. split into subsets
+        train_df_C = train_df[train_df['Dataset']=='Code15'].reset_index(drop=True)
+        train_df_B = train_df[train_df['Dataset']=='BCH'].reset_index(drop=True)
+        train_df_M = train_df[train_df['Dataset']=='MIMICIV'].reset_index(drop=True)
+        
+        # split each subset
+        valid_dfs = []
+        train_dfs = []
+        for temp_df in [train_df_C, train_df_B, train_df_M]:
+            # Per ID, find matching data rows      
+            Subj_IDs = temp_df['PID']          
+            Subj_IDs_Unique = np.unique(Subj_IDs)
+        
+            #Speedup 08/14/24. Much faster than repeat calls to np.where()
+            Subj_ID_to_Rows_Dict = {} # Per PID find rows in the numpy array
+            for ind,val in enumerate(Subj_IDs):
+                if val in Subj_ID_to_Rows_Dict.keys():
+                    Subj_ID_to_Rows_Dict[val].append(ind)
+                else:
+                    Subj_ID_to_Rows_Dict[val] = [ind]
+                    
+            # Split the indices of Subj_IDs_Unique into train/validation/test
+            Train_Inds, Val_Inds, Test_Inds = Data_Split_Rand( [k for k in range(len(Subj_IDs_Unique))], TR, VA, TE)
             
-    # Split the indices of Subj_IDs_Unique into train/validation/test
-    Train_Inds, Val_Inds, Test_Inds = Data_Split_Rand( [k for k in range(len(Subj_IDs_Unique))], TR, VA, TE)
+            # Speedup 08/14/24
+            Train_Inds_ECG  = [Row for Unique_PID_Ind in Train_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[Unique_PID_Ind]] ]
+            Val_Inds_ECG  = [Row for Unique_PID_Ind in Val_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[Unique_PID_Ind]] ]
+            # Test_Inds_ECG = [Row for PID in Test_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[PID]] ]
+            
+            Val_Inds_ECG = np.array(Val_Inds_ECG)
+            Train_Inds_ECG = np.array(Train_Inds_ECG)
+            
+            # Split the training dataframes
+            valid_dfs.append(temp_df.loc[Val_Inds_ECG].copy().reset_index(drop=True)) #iloc == loc here
+            train_dfs.append(temp_df.loc[Train_Inds_ECG].copy().reset_index(drop=True))
+        
+        # 2. recombine. split into subsets
+        train_df = pd.concat(train_dfs).reset_index(drop=True)
+        valid_df = pd.concat(valid_dfs).reset_index(drop=True)
+        
+    # If only working with one dataset
+    else:
+        
+        # Per ID, find matching data rows      
+        Subj_IDs = train_df['PID']          
+        Subj_IDs_Unique = np.unique(Subj_IDs)
     
-    # Speedup 08/14/24
-    Train_Inds_ECG  = [Row for Unique_PID_Ind in Train_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[Unique_PID_Ind]] ]
-    Val_Inds_ECG  = [Row for Unique_PID_Ind in Val_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[Unique_PID_Ind]] ]
-    # Test_Inds_ECG = [Row for PID in Test_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[PID]] ]
-    
-    Val_Inds_ECG = np.array(Val_Inds_ECG)
-    
-    # Split the training dataframes
-    valid_df  = train_df.loc[Val_Inds_ECG].copy().reset_index(drop=True)
-    train_df  = train_df.loc[Train_Inds_ECG].copy().reset_index(drop=True)
+        #Speedup 08/14/24. Much faster than repeat calls to np.where()
+        Subj_ID_to_Rows_Dict = {} # Per PID find rows in the numpy array
+        for ind,val in enumerate(Subj_IDs):
+            if val in Subj_ID_to_Rows_Dict.keys():
+                Subj_ID_to_Rows_Dict[val].append(ind)
+            else:
+                Subj_ID_to_Rows_Dict[val] = [ind]
+                
+        # Split the indices of Subj_IDs_Unique into train/validation/test
+        Train_Inds, Val_Inds, Test_Inds = Data_Split_Rand( [k for k in range(len(Subj_IDs_Unique))], TR, VA, TE)
+        
+        # Speedup 08/14/24
+        Train_Inds_ECG  = [Row for Unique_PID_Ind in Train_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[Unique_PID_Ind]] ]
+        Val_Inds_ECG  = [Row for Unique_PID_Ind in Val_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[Unique_PID_Ind]] ]
+        # Test_Inds_ECG = [Row for PID in Test_Inds for Row in Subj_ID_to_Rows_Dict[Subj_IDs_Unique[PID]] ]
+        
+        Val_Inds_ECG = np.array(Val_Inds_ECG)
+        
+        # Split the training dataframes
+        valid_df  = train_df.loc[Val_Inds_ECG].copy().reset_index(drop=True)
+        train_df  = train_df.loc[Train_Inds_ECG].copy().reset_index(drop=True)
     
     print('Model_Runner: Split Train into Train/Valid. Data Split Time: ' + str(time.time()-start_time) )                            
     return train_df, valid_df 

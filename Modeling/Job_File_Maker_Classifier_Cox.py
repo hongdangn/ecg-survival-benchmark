@@ -42,7 +42,7 @@ def String_List_Append(Str1, Str2):
     return Str1 + [Str2]
 
 # %% Function to build the non-arg part of the job file
-def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_list = ['10022024','Cov','BCH']):
+def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_list = ['061325','FF','All']):
     # returns a list of strings for a partial job file corresponding to inputs.
     # time_h - int
     # time_m - int
@@ -51,7 +51,7 @@ def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_li
     # name_chunks_list: list of details on the model to add to the name
     
     # assemble a full model name
-    Model_Rand_ID = np.random.randint(1,1e7)
+    Model_Rand_ID = np.random.randint(1,1e9)
     name_suffix = [model_type] + name_suffix_list + [str(Model_Rand_ID)]
     Full_Model_Name = '_'.join(name_suffix)
     
@@ -94,13 +94,14 @@ def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_li
     String_List = String_List_Append(String_List, '#SBATCH --output=./Job_File_Out/Out_'+job_name+'.txt')
     String_List = String_List_Append(String_List, '#SBATCH --ntasks=1')
     String_List = String_List_Append(String_List, '#SBATCH --mem='+str(mem)+'G')
+    String_List = String_List_Append(String_List, '#SBATCH --qos=unlimited')
     
     String_List = String_List_Append(String_List, 'hostname') #  ... recommended for debugging
     
     # String_List = String_List_Append(String_List, 'module load singularity') # not needed since 5/1/24
     
     # And now we build the call
-    Sing_Cmd = 'singularity exec --bind /lab-share --nv Sing_Torch_05032024.sif python3 \'Model_Runner_SurvClass.py\''
+    Sing_Cmd = 'singularity exec --bind /lab-share --nv Sing_Torch_05032024.sif python3 \'Model_Runner_Classifier_Cox.py\''
     
     Sing_Cmd = Sing_Cmd + ' ' + '--Model_Name ' + Full_Model_Name
     
@@ -165,11 +166,9 @@ time_h = 48 # hour # BCH - 6, Code15 - 15. Double for 'Any' GPU
 time_m = 00 # min
 
 GPU = 'Any' # Quadro_RTX or Titan_RTX or Tesla_K or Tesla_T or NVIDIA_A40 or or NVIDIA_A100 'Any' (Any is good for Eval) 
-mem = 199 # GB, must be int. MIMICIV has taken at most 249GB so far, Code15 99GB
+mem = 400 # GB, must be int. MIMICIV has taken at most 249GB so far, Code15 and BCH 100GB
 
 # %% Set Sweep params
-
-
 
 # running: KM and KW sweep for ribeiro and inceptiontime assuming adamw
 # next: fix ribeiro and inceptiontime KM and KW values, run adam v sched v cocob 6x wd levels
@@ -181,23 +180,24 @@ Model_Type_List = ['ZeroNet'] # Ribeiro, InceptionTime, ZeroNet
 for Model_Type in Model_Type_List:
     glob_args_list = [] # args_list is a list of lists. if an appended list has more than one entry, generate job files per entry
 
-    folders = ['BCH_ECG'] # ['BCH_ECG', 'Code15', 'MIMICIV']
-    glob_args_list.append([ ' --Test_Folder ' + k + ' --Train_Folder ' + k for k in folders ])
+    folders = ['All'] # ['BCH', 'Code15', 'MIMICIV']
+    glob_args_list.append([ ' --Train_Folder ' + k for k in folders ])
+    glob_args_list.append([ ' --Test_Folder ' + k for k in ['Code15'] ])
         
     horizons = [1,2,5,10]
     glob_args_list.append([ ' --horizon ' + str(float(k)) for k in horizons ])
     
     glob_args_list.append([ ' --Eval_Dataloader Test'  ]) # 'Validation' or 'Train' (will be shuffled). defaults to test    
-    glob_args_list.append([ ' --Rand_Seed '+ str(k) for k in [10,11,12]  ])  
+    glob_args_list.append([ ' --Rand_Seed '+ str(k) for k in [10,11,12,13,14]  ])  
     
     
-    glob_args_list.append([  ' --y_col_train_time 3'  ]) # code15; bch; MIMICIV - time 3, event 4
-    glob_args_list.append([ ' --y_col_train_event 4'  ]) 
-    glob_args_list.append([   ' --y_col_test_time 3'  ])
-    glob_args_list.append([  ' --y_col_test_event 4'  ])
+    # glob_args_list.append([  ' --y_col_train_time 3'  ]) # code15; bch; MIMICIV - time 3, event 4
+    # glob_args_list.append([ ' --y_col_train_event 4'  ]) 
+    # glob_args_list.append([   ' --y_col_test_time 3'  ])
+    # glob_args_list.append([  ' --y_col_test_event 4'  ])
     # print('job file time/event in MIMICIV format!')
     
-    glob_args_list.append([ ' --Train True'  ])
+    # glob_args_list.append([ ' --Train True'  ])
     # args_list.append([ ' --Load Best'  ]) # exclusive with train
     
     glob_args_list.append([ ' --epoch_end 200'  ])
@@ -217,13 +217,7 @@ for Model_Type in Model_Type_List:
     glob_args_list.append([ ' --Scheduler True'  ])
     
     glob_args_list.append([ ' --Loss_Type CrossEntropyLoss'  ])
-    
-    Cov_Arg_List = ['[2,7]'] # BCH
-    # Cov_Arg_List = ['[1,2]'] # MIMIC demographic
-    # Cov_Arg_List = ['[1,2,6,8,10,12,14,16,18,20]'] # MIMIC demo + machine meas all no bool
-    # Cov_Arg_List = ['[2,5]'] # Code-15
-    glob_args_list.append([ ' --val_covariate_col_list ' + k + ' --test_covariate_col_list ' + k for k in Cov_Arg_List ])
-    
+
     glob_args_list.append([ ' --fusion_layers 3'  ])
     glob_args_list.append([ ' --fusion_dim 128'  ])
     
@@ -231,7 +225,11 @@ for Model_Type in Model_Type_List:
     glob_args_list.append([ ' --cov_dim 32'  ])
     
     
+    covariate_list = ['[Age,Is_Male]']
+    # covariate_list = ['[Age,Is_Male,P_Axis,QRS_Axis,T_Axis,RR,P_Dur,PQ_Dur,QRS_Dur,QT_Dur]']
+    glob_args_list.append([ ' --covariates ' + k for k in covariate_list ])
     
+
     # Optimizer = 'cocob'
     # if Optimizer == 'cocob':
     #     wds = ['0.3','0.1','0.03','0.01','0.003','0.001'] # weight decays for cocob

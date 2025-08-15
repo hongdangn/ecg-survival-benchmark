@@ -112,7 +112,8 @@ class FusionModel(nn.Module):
         # extra variables in case we want to return the '-1' layer
         self.return_second_to_last_layer = False
         
-    def forward(self, x, z):
+        
+    def forward(self, x, z=torch.empty([0,0])):
         # x - ECG
         # z - covariates - float32
         
@@ -298,9 +299,7 @@ class GenericModel:
         self.model.to(self.device)
         
     def prep_classif_loss(self):
-        if 'y_train' in self.Data.keys():     
-            self.Loss_Params = Get_Loss_Params(self.args, Train_Y = self.Data['y_train'])
-        elif ('Loss_Type' in self.args.keys()):
+        if ('Loss_Type' in self.args.keys()):
             self.Loss_Params = Get_Loss_Params(self.args) 
         else:
             self.args['Loss_Type'] = 'SSE'

@@ -274,6 +274,7 @@ def Run_Model(args):
         Save_to_hdf5(hdf5_path, test_df['Age'], 'Age')
         Save_to_hdf5(hdf5_path, test_df['Is_Male'], 'Is_Male')
         Save_to_hdf5(hdf5_path, surv, 'surv')
+        Save_to_hdf5(hdf5_path, test_df['SID'], 'SID')        
 
         print('Model_Runner: Generated survival curves. Total time elapsed: ' + str(time.time()-start_time) )
         

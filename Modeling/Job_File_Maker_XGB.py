@@ -42,7 +42,7 @@ def String_List_Append(Str1, Str2):
     return Str1 + [Str2]
 
 # %% Function to build the non-arg part of the job file
-def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_list = ['10032024']):
+def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_list = ['06132025','XGB','All']):
     # returns a list of strings for a partial job file corresponding to inputs.
     # time_h - int
     # time_m - int
@@ -94,6 +94,7 @@ def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_li
     String_List = String_List_Append(String_List, '#SBATCH --output=./Job_File_Out/Out_'+job_name+'.txt')
     String_List = String_List_Append(String_List, '#SBATCH --ntasks=1')
     String_List = String_List_Append(String_List, '#SBATCH --mem='+str(mem)+'G')
+    # String_List = String_List_Append(String_List, '#SBATCH --qos=unlimited')
     
     String_List = String_List_Append(String_List, 'hostname') #  ... recommended for debugging
     
@@ -161,11 +162,11 @@ def make_single_job_file(Running_Arg, Model_Type):
             f.write(f"{line}\n")
             
 # %% Set Global Params
-time_h = 4 # hour 
+time_h = 1 # hour 
 time_m = 00 # min
 
 GPU = 'None' # Quadro_RTX or Titan_RTX or Tesla_K or Tesla_T or NVIDIA_A40 or or NVIDIA_A100 'Any' (Any is good for Eval) 
-mem = 500 # GB, must be int. MIMICIV has taken at most 249GB so far, Code15 99GB
+mem = 20 # GB, must be int. MIMICIV has taken at most 249GB so far, Code15 99GB
 
 # %% Set Sweep params
 
@@ -180,10 +181,10 @@ Model_Type_List = ['XGB'] # Ribeiro, InceptionTime
 for Model_Type in Model_Type_List:
     glob_args_list = [] # args_list is a list of lists. if an appended list has more than one entry, generate job files per entry
 
-    test_folders = ['MIMICIV'] # ['BCH_ECG', 'Code15', 'MIMICIV']
+    test_folders = ['BCH_ECG', 'Code15', 'MIMICIV'] # ['BCH_ECG', 'Code15', 'MIMICIV']
     glob_args_list.append([ ' --Test_Folder ' + k for k in test_folders ])
     
-    train_folders = ['Code15'] # ['BCH_ECG', 'Code15', 'MIMICIV']
+    train_folders = ['All'] # ['BCH_ECG', 'Code15', 'MIMICIV']
     glob_args_list.append([ ' --Train_Folder ' + k for k in train_folders ])
         
     horizons = [1,2,5,10]
@@ -193,10 +194,10 @@ for Model_Type in Model_Type_List:
     glob_args_list.append([ ' --Rand_Seed '+ str(k) for k in [10,11,12,13,14]  ])  
     
     
-    glob_args_list.append([  ' --y_col_train_time 3'  ]) # code15; bch; MIMICIV - time 3, event 4
-    glob_args_list.append([ ' --y_col_train_event 4'  ]) 
-    glob_args_list.append([   ' --y_col_test_time 3'  ])
-    glob_args_list.append([  ' --y_col_test_event 4'  ])
+    # glob_args_list.append([  ' --y_col_train_time 3'  ]) # code15; bch; MIMICIV - time 3, event 4
+    # glob_args_list.append([ ' --y_col_train_event 4'  ]) 
+    # glob_args_list.append([   ' --y_col_test_time 3'  ])
+    # glob_args_list.append([  ' --y_col_test_event 4'  ])
     # print('job file time/event in MIMICIV format!')
     
     # glob_args_list.append([ ' --Train True'  ])
@@ -220,16 +221,21 @@ for Model_Type in Model_Type_List:
     
     # glob_args_list.append([ ' --Loss_Type CrossEntropyLoss'  ])
     
-    # Cov_Arg_List = ['[1,2,6,8,10,12,14,16,18,20]'] # MIMIC machine measurements and demographics
-    # Tr_Cov_Arg_List = ['[1,2]'] # MIMIC age/sex
-    Tr_Cov_Arg_List = ['[2,5]'] # Code-15
-    # Tr_Cov_Arg_List = ['[2,7]'] # BCH
-    glob_args_list.append([ ' --val_covariate_col_list ' + k  for k in Tr_Cov_Arg_List ])
+    # covariate_list = ['[Age,Is_Male,P_Axis,QRS_Axis,T_Axis,RR,P_Dur,PQ_Dur,QRS_Dur,QT_Dur]']
+    covariate_list = ['[Age,Is_Male]']
+    glob_args_list.append([ ' --covariates ' + k for k in covariate_list ])
     
-    Test_Cov_Arg_List = ['[1,2]'] # MIMIC age/sex
+    # Tr_Cov_Arg_List = ['[1,2,6,8,10,12,14,16,18,20]'] # MIMIC machine measurements and demographics
+    # Tr_Cov_Arg_List = ['[1,2]'] # MIMIC age/sex
+    # Tr_Cov_Arg_List = ['[2,5]'] # Code-15
+    # Tr_Cov_Arg_List = ['[2,7]'] # BCH
+    # glob_args_list.append([ ' --val_covariate_col_list ' + k  for k in Tr_Cov_Arg_List ])
+    
+    # Test_Cov_Arg_List = ['[1,2,6,8,10,12,14,16,18,20]'] # MIMIC machine measurements and demographics
+    # Test_Cov_Arg_List = ['[1,2]'] # MIMIC age/sex
     # Test_Cov_Arg_List = ['[2,5]'] # Code-15
     # Test_Cov_Arg_List = ['[2,7]'] # BCH
-    glob_args_list.append([ ' --test_covariate_col_list ' + k for k in Test_Cov_Arg_List ])
+    # glob_args_list.append([ ' --test_covariate_col_list ' + k for k in Test_Cov_Arg_List ])
     
     # glob_args_list.append([ ' --fusion_layers 3'  ])
     # glob_args_list.append([ ' --fusion_dim 128'  ])

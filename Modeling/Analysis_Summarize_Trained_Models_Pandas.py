@@ -107,7 +107,7 @@ for Train_Source in os.listdir(Trained_Models_Path):
         else:                                   # has eval folder: check for any model outputs
             skip_eval_dir = True
             for root,dirs,files in os.walk(Eval_Path):
-                if 'Stored_Model_Output.hdf5' in files: # any model outputs: continue
+                if 'Stored_Model_Output.csv' in files: # any model outputs: continue
                     skip_eval_dir = False
                     break
         
@@ -138,21 +138,12 @@ for Train_Source in os.listdir(Trained_Models_Path):
         
             # prep measures dictionary
             model_measure_dict = {}
-            Measures_Path = os.path.join(Test_Path, 'Stored_Model_Output.hdf5')
-            with h5py.File(Measures_Path, "r") as f:
-                print(Test_Path)
-                # keys = [key for key in f.keys()]
-                # for i,k in enumerate(keys):
-                #     print(i,k,f[k][()].shape)
-                
-                
-                AUROC = f['AUROC'][()]
-                AUPRC = f['AUPRC'][()]
-                # BS_Brier = f['bootstrap_briers'][()].transpose() # bootstrapped
-                # BS_Conc  = f['bootstrap_concordances'][()].transpose()
-                RS_Brier = f['ipcw_brier_store_all_ecg'][()]
-                RS_Conc = f['concordance_store_all_ecg'][()] # right-censored
-                Times = f['sample_time_points'][()]
+            Measures_Path = os.path.join(Test_Path, 'Stored_Model_Output.csv')
+            tmp_loaded_df = pd.read_csv(Measures_Path)
+            AUROC = tmp_loaded_df['AUROC'].values
+            AUPRC = tmp_loaded_df['AUPRC'].values
+            RS_Conc = tmp_loaded_df['Concordance'].values
+            Times = tmp_loaded_df['sample_time_points'].values
             
             # okay. now for every time point we care about we 1) find the nearest stored entry, 2) log the corresponding time, 3) store all the measures
             
@@ -167,7 +158,7 @@ for Train_Source in os.listdir(Trained_Models_Path):
                     
                 model_measure_dict['T' + str(Time_Point) + ' ' + 'AUROC']    = AUROC[nearest_ind]
                 model_measure_dict['T' + str(Time_Point) + ' ' + 'AUPRC']    = AUPRC[nearest_ind]
-                model_measure_dict['T' + str(Time_Point) + ' ' + 'RS_Brier'] = RS_Brier[nearest_ind]
+                # model_measure_dict['T' + str(Time_Point) + ' ' + 'RS_Brier'] = RS_Brier[nearest_ind]
                 model_measure_dict['T' + str(Time_Point) + ' ' + 'RS_Conc']  = RS_Conc[nearest_ind]
                 
                 # for i,k in enumerate(BS_Brier[nearest_ind]):
@@ -567,7 +558,7 @@ dataframe = df
     
 #  All baselines and cross-evaluations
 baselines = {}
-for datafolder in ['Code15', 'BCH', 'MIMICIV']:
+for datafolder in ['Code15', 'BCH', 'MIMICIV','All']:
     tmp = dataframe[ (dataframe["Train_Folder"]== datafolder)
                # * (dataframe["Test_Folder"]!= dataframe["Train_Folder"])
                # * (dataframe["val_covariate_col_list"].isin(["No Entry"]))
@@ -584,7 +575,7 @@ for datafolder in ['Code15', 'BCH', 'MIMICIV']:
     
 
 cnns = {}
-for datafolder in ['Code15', 'BCH', 'MIMICIV']:
+for datafolder in ['Code15', 'BCH', 'MIMICIV','All']:
     tmp = dataframe[ (dataframe["Train_Folder"]== datafolder)
                # * (dataframe["Test_Folder"]!= dataframe["Train_Folder"])
                # * (dataframe["val_covariate_col_list"].isin(["No Entry"]))

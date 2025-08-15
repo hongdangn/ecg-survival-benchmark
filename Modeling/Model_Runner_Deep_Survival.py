@@ -146,13 +146,20 @@ def Run_Model(args):
     torch.backends.cudnn.deterministic = True # make TRUE if you want reproducible results (slower)
     
     # %% Process data: Load, Clean, Split
-    train_df, test_df = Load_Labels(args)       # Data is a dict, is passed by reference
+    train_df, test_df = Load_Labels(args)       # Data is a dict, is passed by reference 
     # Clean_Data(Data, args)       # remove TTE<0 and NaN ECG
     # Apply_Horizon(train_df, test_df, args)    # classifiers need to compact TTE and E into a single value, E*. Augments Data['y_'] for model train/runs without overwriting loaded information.
     train_df, valid_df = Split_Data(train_df)             # splits 'train' data 80/20 into train/val by PID
+    
+    # check for dataset contamination
+    print('Tr/Te contaminants:',np.intersect1d(train_df.PID.values,test_df.PID.values))
+    print('Tr/Va contaminants:',np.intersect1d(train_df.PID.values,valid_df.PID.values))
+    print('Va/Te contaminants:',np.intersect1d(test_df.PID.values,valid_df.PID.values))
+
     Data, train_df, valid_df, test_df = Load_ECG_and_Cov(train_df, valid_df, test_df, args)
     # DebugSubset_Data(Data, train_df, test_df, args) # If args['debug'] == True, limits Data[...] to 1k samples each of tr/val/test.
-    
+
+            
     # %% 5. set up trained model folders if they  don't exist
     
     set_up_train_folders(args)
@@ -205,6 +212,7 @@ def Run_Model(args):
         Save_to_hdf5(outputs_hdf5_path, test_df['Age'], 'Age')
         Save_to_hdf5(outputs_hdf5_path, test_df['Is_Male'], 'Is_Male')        
         Save_to_hdf5(outputs_hdf5_path, surv, 'surv')
+        Save_to_hdf5(outputs_hdf5_path, test_df['SID'], 'SID')        
         
 
         # %% 16. evlauations
@@ -219,6 +227,8 @@ def Run_Model(args):
         # Gen_Concordance_Brier_No_Bootstrap(surv_df, disc_y_t, disc_y_e.astype(bool), time_points, sample_time_points, args)
         Gen_Concordance_Brier_No_Bootstrap(surv_df, disc_y_t, disc_y_e, time_points, sample_time_points, args)
         # bootstrap: 1 ECG per patient x 20
+        
+        # NOTE: "ALL" models need to be rebuilt here: C15 and BCH PIDs overlapped, and adjusting labels changes the Tr/Val split!
         # Gen_Concordance_Brier_PID_Bootstrap(Data, args, disc_y_t, disc_y_e, surv_df, sample_time_points, time_points)
         
         # AUROC and AUPRC

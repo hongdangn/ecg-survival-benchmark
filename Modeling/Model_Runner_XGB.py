@@ -9,27 +9,25 @@ os.environ['PYCOX_DATA_DIR'] = os.path.join(os.getcwd(),'Mandatory_PyCox_Dir') #
 
 
 
-from Model_Runner_Support import get_covariates
+# from Model_Runner_Support import get_covariates
 
-from Model_Runner_Support import Load_Data
-from Model_Runner_Support import Clean_Data
+from Model_Runner_Support import Load_Labels
+# from Model_Runner_Support import Clean_Data
 from Model_Runner_Support import Apply_Horizon
 from Model_Runner_Support import Split_Data
-from Model_Runner_Support import DebugSubset_Data
+# from Model_Runner_Support import DebugSubset_Data
 from Model_Runner_Support import set_up_train_folders
 from Model_Runner_Support import set_up_test_folders
 
-from Model_Runner_Support import provide_data_details
+# from Model_Runner_Support import provide_data_details
 
 # evaluation wrappers
 from Model_Runner_Support import Gen_KM_Bootstraps
 from Model_Runner_Support import Gen_Concordance_Brier_No_Bootstrap
-from Model_Runner_Support import Gen_Concordance_Brier_PID_Bootstrap
+# from Model_Runner_Support import Gen_Concordance_Brier_PID_Bootstrap
 from Model_Runner_Support import Gen_AUROC_AUPRC
 from Model_Runner_Support import print_classifier_ROC
 from Model_Runner_Support import save_histogram
-
-from MODELS import GenericModelSurvClass
 
 
 from MODELS.Support_Functions import Save_to_hdf5
@@ -58,9 +56,10 @@ from sklearn.metrics import average_precision_score
 from sklearn.preprocessing import MinMaxScaler
 from xgboost import XGBClassifier
 
-# scipy compatability...
+# %% Compatability - bring back older version of scipy simpson function
 import scipy
-scipy.integrate.simps = scipy.integrate.simpson
+from MODELS.Support_Functions import simps
+scipy.integrate.simps = simps
 
 # %% 
 def main(*args):
@@ -125,36 +124,34 @@ def Run_Model(args):
     torch.backends.cudnn.deterministic = True # make TRUE if you want reproducible results (slower)
     
     # Y covariate indices get passed here
-    val_covariate_col_list, test_covariate_col_list = get_covariates(args)
+    # val_covariate_col_list, test_covariate_col_list = get_covariates(args)
+    
+    
     
     # %% Process data: Load, Clean, Split
-    Data, Train_Col_Names, Test_Col_Names = Load_Data(args)       # Data is a dict, so passed by reference from now on
-    Clean_Data(Data, args)       # remove TTE<0 and NaN ECG
+    train_df, test_df = Load_Labels(args)       # Data is a dict, is passed by reference
+    # Clean_Data(Data, args)       # remove TTE<0 and NaN ECG
+    Apply_Horizon(train_df, test_df, args)    # classifiers need to compact TTE and E into a single value, E*. Augments Data['y_'] for model train/runs without overwriting loaded information.
+    train_df, valid_df = Split_Data(train_df)             # splits 'train' data 80/20 into train/val by PID
     
-    if ('provide_data_details' in args.keys()):
-        if (args['provide_data_details'] == 'True'):
-            provide_data_details(args, Data, Train_Col_Names, Test_Col_Names)
+    # Can skip pulling ECG and re-ordering dataframe
     
-    Apply_Horizon(Data, args)    # classifiers need to compact TTE and E into a single value, E*. Augments Data['y_'] for model train/runs without overwriting loaded information.
-    Split_Data(Data)             # splits 'train' data 80/20 into train/val by PID
-    DebugSubset_Data(Data, args) # If args['debug'] == True, limits Data[...] to 1k samples each of tr/val/test.
+    # Data, train_df, valid_df, test_df = Load_ECG_and_Cov(train_df, valid_df, test_df, args)
+    # DebugSubset_Data(Data, train_df, test_df, args) # If args['debug'] == True, limits Data[...] to 1k samples each of tr/val/test.
     
-    # dump x
-    for key in ['train', 'valid', 'test']:
-        x_key = 'x_'+key
-        Data[x_key] = []
+    # if ('provide_data_details' in args.keys()):
+    #     if (args['provide_data_details'] == 'True'):
+    #         provide_data_details(args, Data, Train_Col_Names, Test_Col_Names)
     
-    # augment data with reshaped covariates
-    for key in ['train', 'valid']:
-        y_key = 'y_'+key
-        z_key = 'z_'+key # for covariates
-        Data[z_key] = Data[y_key][:,val_covariate_col_list]
-        
-    for key in ['test']:
-        y_key = 'y_'+key
-        z_key = 'z_'+key # for covariates
-        Data[z_key] = Data[y_key][:,test_covariate_col_list]
-        
+    if ('covariates' in args.keys()):
+        cov_list = args['covariates'][1:-1].split(',')
+        Data = {}
+        Data['Cov_train'] = train_df[cov_list].to_numpy().astype(np.float32)
+        Data['Cov_valid'] = valid_df[cov_list].to_numpy().astype(np.float32)
+        Data['Cov_test']  =  test_df[cov_list].to_numpy().astype(np.float32)
+    else:
+        breakpoint()
+    
             
     # %% 9. set up trained model folders if they  don't exist
     set_up_train_folders(args)
@@ -166,13 +163,13 @@ def Run_Model(args):
     
     # do we need to normalize data first? yes
     # from https://xgboosting.com/xgboost-min-max-scaling-numerical-input-features/
-    
     scaler = MinMaxScaler(feature_range=(-1, 1))
-    Data['z_train'] = scaler.fit_transform(Data['z_train'])
-    Data['z_valid'] = scaler.transform(Data['z_valid'])
-    Data['z_test'] = scaler.transform(Data['z_test'])
     
-    asdf.fit(Data['z_train'], Data['y_train'][:,-1])
+    Data['Cov_train'] = scaler.fit_transform(Data['Cov_train'])
+    Data['Cov_valid'] = scaler.transform(Data['Cov_valid'])
+    Data['Cov_test'] = scaler.transform(Data['Cov_test'])
+    
+    asdf.fit(Data['Cov_train'], train_df['E*'])
 
     # %% 11. Generate and save out results   
     print('got to eval. Total Time elapsed: ' ,'{:.2f}'.format(time.time()-start_time))
@@ -181,19 +178,22 @@ def Run_Model(args):
         # get model outputs for test, validation sets (unshuffled)
         if ('Eval_Dataloader' not in args.keys()): # This lets you evaluate the model on its validation set instead of test set
             args['Eval_Dataloader'] = 'Test'
+            
         if args['Eval_Dataloader'] == 'Test':
-            test_outputs =  asdf.predict_proba(Data['z_test'])[:,1]
-            test_correct_outputs = Data['y_test'][:,-1] # E*, horizoned event, is at -1
+            test_outputs =  asdf.predict_proba(Data['Cov_test'])[:,1]
+            test_correct_outputs = test_df['E*'] 
+            
         if args['Eval_Dataloader'] == 'Train':
-            test_outputs =  asdf.predict_proba(Data['z_train'])[:,1]
-            test_correct_outputs = Data['y_train'][:,-1] # E*, horizoned event, is at -1
+            test_outputs =  asdf.predict_proba(Data['Cov_train'])[:,1]
+            test_correct_outputs = train_df['E*'] 
+            
         if args['Eval_Dataloader'] == 'Valid':
-            test_outputs =  asdf.predict_proba(Data['z_valid'])[:,1]
-            test_correct_outputs = Data['y_valid'][:,-1] # E*, horizoned event, is at -1
+            test_outputs =  asdf.predict_proba(Data['Cov_valid'])[:,1]
+            test_correct_outputs = valid_df['E*'] 
             
         # get validation outputs anyway for Cox model fit
-        val_outputs =  asdf.predict_proba(Data['z_valid'])[:,1]
-        val_correct_outputs = Data['y_valid'][:,-1] # E*, horizoned event, is at -1
+        val_outputs =  asdf.predict_proba(Data['Cov_valid'])[:,1]
+        val_correct_outputs = valid_df['E*'] 
         
         # adjust output formats
         val_outputs  = np.squeeze(val_outputs)
@@ -214,8 +214,11 @@ def Run_Model(args):
         tmp = os.path.join(args['Model_Eval_Path'], 'Classif_Outputs_and_Labels.hdf5')
         Save_to_hdf5(tmp, val_outputs, 'val_outputs')
         Save_to_hdf5(tmp, test_outputs, 'test_outputs')
-        Save_to_hdf5(tmp, Data['y_valid'], 'y_valid')
-        Save_to_hdf5(tmp, Data['y_test'], 'y_test')
+        Save_to_hdf5(tmp, valid_df['E*'], 'valid_E*')
+        Save_to_hdf5(tmp, valid_df['TTE*'], 'valid_TTE*')
+        Save_to_hdf5(tmp, test_df['E*'], 'test_E*')
+        Save_to_hdf5(tmp, test_df['TTE*'], 'test_TTE*')
+        # Save_to_hdf5(tmp, Data['y_test'], 'y_test')
         
         # %% 13. Run Cox models
         # fit a Cox model on the VALIDATION set, evaluate on TEST set
@@ -226,27 +229,26 @@ def Run_Model(args):
 
         # build CoxPH curves on validation data
         zxcv = CoxPHSurvivalAnalysis() 
-        a = Data['y_valid'][:,[int(args['y_col_train_event']) ]].astype(bool)   # CoxPH is built on if/when the event actually happened
-        b = Data['y_valid'][:,[int(args['y_col_train_time']) ]]                 # shouldn't this also be limited?
-        tmp = np.array([ (a[k],b[k][0]) for k in range(a.shape[0]) ], dtype = [('event',bool),('time',float)] )
+        a = valid_df['Mort_Event'].to_numpy().astype(bool) # Event as bool
+        b = valid_df['Mort_TTE'].to_numpy()
+              
+        tmp = np.array([ (a[k],b[k]) for k in range(a.shape[0]) ], dtype = [('event',bool),('time',float)] )
         zxcv.fit(np.expand_dims(val_outputs,-1), tmp   )
         
-        # prep evaluation data - evaluate on if/when things actually happen
+        # prep evaluation data - be sure to use actual time/event, not horizon
         if (args['Eval_Dataloader'] == 'Train'):
-            disc_y_e = Data['y_train'][:,[int(args['y_col_train_event']) ]].astype(bool) # prep event
-            disc_y_t = Data['y_train'][:,[int(args['y_col_train_time']) ]] # prep time
-            
+            disc_y_e = train_df['Mort_Event'].to_numpy().astype(bool) # Event as bool
+            disc_y_t = train_df['Mort_TTE'].to_numpy()
         elif (args['Eval_Dataloader'] == 'Validation'):
-            disc_y_e = Data['y_valid'][:,[int(args['y_col_train_event']) ]].astype(bool) # prep event
-            disc_y_t = Data['y_valid'][:,[int(args['y_col_train_time']) ]] # prep time
-            
+            disc_y_e = valid_df['Mort_Event'].to_numpy().astype(bool) # Event as bool
+            disc_y_t = valid_df['Mort_TTE'].to_numpy()
         else:
-            disc_y_e = Data['y_test'][:,[int(args['y_col_test_event']) ]].astype(bool) # prep event
-            disc_y_t = Data['y_test'][:,[int(args['y_col_test_time']) ]] # prep time
+            disc_y_e = test_df['Mort_Event'].to_numpy().astype(bool) # Event as bool
+            disc_y_t = test_df['Mort_TTE'].to_numpy()
     
         # %% 14. Prep everything to match PyCox analysis
         # sample survival functions at a set of times (to compare to direct survival moels)
-        upper_time_lim = max( b )[0] # the fit is limited to validation end times, so do 100 bins of tha
+        upper_time_lim = max( b ) # the fit is limited to validation end times, so do 100 bins of tha
         sample_time_points = np.linspace(0, upper_time_lim, 100).squeeze()
         
         surv_funcs = zxcv.predict_survival_function(np.expand_dims(test_outputs,-1))
@@ -257,14 +259,13 @@ def Run_Model(args):
         
         surv_df = pd.DataFrame(np.transpose(surv)) 
         
-        # %% 15. Save out everything we need to recreate evaluation: 
+        # %% 15. Save out everything we need to recreate evaluation off-cluster: 
         hdf5_path = os.path.join(args['Model_Eval_Path'], 'Stored_Model_Output.hdf5')
         Save_to_hdf5(hdf5_path, sample_time_points, 'sample_time_points')
         Save_to_hdf5(hdf5_path, disc_y_e, 'disc_y_e') # what really happened
         Save_to_hdf5(hdf5_path, disc_y_t, 'disc_y_t') # when it really happened, discretized
-        Save_to_hdf5(hdf5_path, Data['y_test'], 'y_test')
+        Save_to_hdf5(hdf5_path, test_df['E*'].to_numpy(), 'Test E*')
         Save_to_hdf5(hdf5_path, surv, 'surv')
-        Save_to_hdf5(hdf5_path, Test_Col_Names + ['PID', 'TTE*', 'E*'], 'Test_Col_Names')
 
         print('Model_Runner: Generated survival curves. Total time elapsed: ' + str(time.time()-start_time) )
         
@@ -278,7 +279,7 @@ def Run_Model(args):
         # across all ECG
         Gen_Concordance_Brier_No_Bootstrap(surv_df, disc_y_t, disc_y_e, time_points, sample_time_points, args)
         # bootstrap: 1 ECG per patient x 20
-        Gen_Concordance_Brier_PID_Bootstrap(Data, args, disc_y_t, disc_y_e, surv_df, sample_time_points, time_points)
+        # Gen_Concordance_Brier_PID_Bootstrap(Data, args, disc_y_t, disc_y_e, surv_df, sample_time_points, time_points)
         
         # AUROC and AUPRC
         time_points = [1,2,5,10] # 999 doesn't work for AUROC

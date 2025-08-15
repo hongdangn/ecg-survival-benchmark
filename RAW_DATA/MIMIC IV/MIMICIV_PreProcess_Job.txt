@@ -5,12 +5,10 @@
 #SBATCH --output=./Job_File_Out/Out_MIMIC_IV_Process.txt
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
 #SBATCH --mem=512G
 
 
 pwd
 
-module load singularity-ce
 
-apptainer exec --bind /lab-share Sing_Torch_05032024.sif python3 './RAW_DATA/MIMIC_IV_Process.py' 
+apptainer exec --bind /lab-share Sing_Torch_05032024.sif python3 '../RAW_DATA/MIMIC_IV_PreProcess_Jan2025.py' 

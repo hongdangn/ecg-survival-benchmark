@@ -41,7 +41,7 @@ def String_List_Append(Str1, Str2):
     return Str1 + [Str2]
 
 # %% Function to build the non-arg part of the job file
-def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_list = ['10022024','Cov','BCH']):
+def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_list = ['071725','2048Dim','ALL_DATASET']):
     # returns a list of strings for a partial job file corresponding to inputs.
     # time_h - int
     # time_m - int
@@ -93,12 +93,13 @@ def Get_Global_String_List( time_h, time_m, GPU, mem, model_type, name_suffix_li
     String_List = String_List_Append(String_List, '#SBATCH --output=./Job_File_Out/Out_'+job_name+'.txt')
     String_List = String_List_Append(String_List, '#SBATCH --ntasks=1')
     String_List = String_List_Append(String_List, '#SBATCH --mem='+str(mem)+'G')
+    String_List = String_List_Append(String_List, '#SBATCH --qos=unlimited')
     
     String_List = String_List_Append(String_List, 'hostname') #  ... recommended for debugging
     # String_List = String_List_Append(String_List, 'module load singularity') # don't need after 5/1/24
     
     # And now we build the call
-    Sing_Cmd = 'singularity exec --bind /lab-share --nv Sing_Torch_05032024.sif python3 \'Model_Runner_PyCox.py\''
+    Sing_Cmd = 'singularity exec --bind /lab-share --nv Sing_Torch_05032024.sif python3 \'Model_Runner_Deep_Survival.py\''
     Sing_Cmd = Sing_Cmd + ' ' + '--Model_Name ' + Full_Model_Name
     
     # Now we have a partial job file
@@ -147,7 +148,7 @@ def make_single_job_file(Running_Arg, Model_Type):
     tmp = os.path.join(os.getcwd(), 'Jobs_Generated')
     if (os.path.isdir(tmp) == False):
         os.mkdir(tmp)
-    targ_dir = os.path.join(os.getcwd(), 'Jobs_Generated','PyCox')
+    targ_dir = os.path.join(os.getcwd(), 'Jobs_Generated','071725')
     if (os.path.isdir(targ_dir) == False):
         os.mkdir(targ_dir)
     file_path = os.path.join(targ_dir, job_name+'.txt')
@@ -161,34 +162,35 @@ time_h = 48 # hour # BCH - 6, Code15 - 15. Double for 'Any' GPU
 time_m = 00 # min
 
 GPU = 'Any' # Quadro_RTX or Titan_RTX or Tesla_K or Tesla_T or NVIDIA_A40 or or NVIDIA_A100 'Any' (Any is good for Eval) 
-mem = 199 # GB, must be int. usually 99 for Code15, or 333 for MIMIC-IV
+mem = 400 # GB, must be int. usually 99 for Code15, or 333 for MIMIC-IV, BCH:199
 
 # %% Set Sweep params
 
 # each element of args_list MUST begin with ' --' (including the space)
 
-Model_Type_List = ['ZeroNet'] # RibeiroReg, InceptionTimeReg, LSTMReg, TimesNetReg, SpectCNNReg
+Model_Type_List = ['Ribeiro'] # Ribeiro, InceptionTime, LSTMReg, TimesNetReg, SpectCNNReg, ECGTransForm
 for Model_Type in Model_Type_List:
     glob_args_list = [] # glob_args_list is a list of lists. if an appended list has more than one entry, generate job files per entry
 
-    folders = ['BCH_ECG'] # ['BCH_ECG', 'Code15', 'MIMICIV']
-    glob_args_list.append([ ' --Test_Folder ' + k + ' --Train_Folder ' + k for k in folders ])
+    folders = ['All'] # ['BCH', 'Code15', 'MIMICIV']
+    glob_args_list.append([ ' --Train_Folder ' + k for k in folders ])
+    glob_args_list.append([ ' --Test_Folder ' + k for k in ['MIMICIV'] ])
     
 
-    PyCox_Mdls = ['CoxPH','LH','DeepHit','MTLR'] #Survival Models: 'LH', 'DeepHit', 'MTLR', 'CoxPH'
-    # PyCox_Mdls = ['DeepHit'] #Survival Models: 'LH', 'DeepHit', 'MTLR', 'CoxPH'
+    # PyCox_Mdls = ['LH','DeepHit','MTLR','CoxPH'] #Survival Models: 'LH', 'DeepHit', 'MTLR', 'CoxPH'
+    PyCox_Mdls = ['DeepHit'] #Survival Models: 'LH', 'DeepHit', 'MTLR', 'CoxPH'
     glob_args_list.append([ ' --pycox_mdl ' + k for k in PyCox_Mdls ])
     
         
     glob_args_list.append([ ' --Eval_Dataloader Test'  ]) # 'Test', 'Validation', or 'Train'. defaults to test. Others good to debug performance.
     
-    glob_args_list.append([ ' --Rand_Seed '+ str(k) for k in [10,11,12] ])  
+    glob_args_list.append([ ' --Rand_Seed '+ str(k) for k in [10] ])  
     
     
-    glob_args_list.append([  ' --y_col_train_time 3'  ]) # code15; bch - time 3, event 4
-    glob_args_list.append([ ' --y_col_train_event 4'  ]) # mimiciv - time 2, event 3
-    glob_args_list.append([   ' --y_col_test_time 3'  ])
-    glob_args_list.append([  ' --y_col_test_event 4'  ])
+    # glob_args_list.append([  ' --y_col_train_time 3'  ]) # code15; bch - time 3, event 4
+    # glob_args_list.append([ ' --y_col_train_event 4'  ]) # mimiciv - time 2, event 3
+    # glob_args_list.append([   ' --y_col_test_time 3'  ])
+    # glob_args_list.append([  ' --y_col_test_event 4'  ])
     
     # glob_args_list.append([ ' --Train True'  ]) # can exclude 6/13/24. Always loading Train data now. Toggle epoch_end <0 to avoid training.
     
@@ -214,15 +216,20 @@ for Model_Type in Model_Type_List:
     glob_args_list.append([ ' --Scheduler True'  ])
     
     
-    Cov_Arg_List = ['[2,7]'] # BCH
+    covariate_list = ['[Age,Is_Male]']
+    # covariate_list = ['[Age,Is_Male,P_Axis,QRS_Axis,T_Axis,RR,P_Dur,PQ_Dur,QRS_Dur,QT_Dur]']
+    glob_args_list.append([ ' --covariates ' + k for k in covariate_list ])
+    
+    
+    # Cov_Arg_List = ['[2,7]'] # BCH
     # Cov_Arg_List = ['[2,5]'] # Code-15
     # Cov_Arg_List = ['[1,2]'] # MIMIC
     # Cov_Arg_List = ['[1,2,6,8,10,12,14,16,18,20]'] # MIMIC demo + machine meas all no bool
-    glob_args_list.append([ ' --val_covariate_col_list ' + k + ' --test_covariate_col_list ' + k for k in Cov_Arg_List ])
-    
+    # glob_args_list.append([ ' --val_covariate_col_list ' + k + ' --test_covariate_col_list ' + k for k in Cov_Arg_List ])
+    # 
     
     glob_args_list.append([ ' --fusion_layers 3'  ])
-    glob_args_list.append([ ' --fusion_dim 128'  ])
+    glob_args_list.append([ ' --fusion_dim 2048'  ])
     
     glob_args_list.append([ ' --cov_layers 3'  ])
     glob_args_list.append([ ' --cov_dim 32'  ])
