@@ -1,0 +1,4 @@
+pandas
+torch
+torchvision
+h5py
