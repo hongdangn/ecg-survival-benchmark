@@ -1,46 +1,11 @@
-"""
-Generic_Model_PyCox is a Generic_Model modified to better fit PyCox models.
-
-Many Generic_Model functions are overwritten.
-
-Like Generic_Model, this provides generic functions that a specific_pycox_model might want to use
-
-# Additional args expected:
-# args['num_durations']  # int, how many discrete time points to use
-# args['pycox_mdl']      # str, which survival model to use. one of ['LH', 'MTLR', 'DeepHit','CoxPH']
-
-
-Does:
-- Fixes a bug in DeepHitSingle loss
-
-Samplers and Datasets:   
-- Custom_Sampler: a Sampler for a Dataloader that guarantees 1 positive case per batch
-- Dataset_FuncList: a Dataset that applies functions, from a list, to each sample, in order. Can return either X or (X,Y) 
-    Note:
-    - A DataLoader tells a Sampler to provide it with a list of indices. These go to a Dataset, which provides data. The Dataloader manages data batching and re-initializing Samplers when the epoch ends.
-    - PyCox handles its own training, so we never get to access a 'batch' of samples. Any changes we want to make to a data (e.g. normalization) have to be front-loaded (which wouldn't work for e.g. augmentation) or done per-sample by the 'Dataset'
-    - In retrospect, I probabaly should have had the "Dataset" return a "batch" and have the 'DataLoader' go with a "batch size" of one
-
-- Process_Args_PyCox: Runs Generic_Model.Process_Args(), then processes args generic to PyCox models
-- Prep_Data_Normalization_Discretization: prepares normalization AND discretization (3 of 4 PyCox models want 'time' to be an integer bin)
-- Process_Data_To_Dataloaders: Here, unlike Generic_Model, we front-load data normalizaiton. also front-loads discretization
-- Get_PyCox_Model: Loads the right PyCox model. wraps model.
-- Train: PyCox handles its own training, so we run that 1 epoch at a time.
-- Run_NN: Evaluates a PyCox model (during validation or testing)
-- Save_NN_PyCox: Saves all model components
-- Test: wraps Run_NN to return evaluation results
-
-"""
-
-
 import torch
 import numpy as np
 import time
 import os
 
-from MODELS.GenericModel import GenericModel
+from src.zoo.GenericModel import GenericModel
 
-from MODELS.Support_Functions import Save_Train_Args
+from src.zoo.utils import Save_Train_Args
 
         
 import torchtuples as tt
@@ -53,47 +18,28 @@ import pandas as pd
 import copy
 
 # models
-from MODELS.Ribeiro_Classifier import get_ribeiro_model
-from MODELS.Ribeiro_Classifier import get_ribeiro_process_multi_image
-from MODELS.Ribeiro_Classifier import get_ribeiro_process_single_image
+from src.zoo.ribeiro.Ribeiro_Classifier import get_ribeiro_model
+from src.zoo.ribeiro.Ribeiro_Classifier import get_ribeiro_process_multi_image
+from src.zoo.ribeiro.Ribeiro_Classifier import get_ribeiro_process_single_image
 
-from MODELS.InceptionTimeClassifier import get_InceptionTime_model
-from MODELS.InceptionTimeClassifier import get_InceptionTime_process_multi_image
-from MODELS.InceptionTimeClassifier import get_InceptionTime_process_single_image
+from src.zoo.inception_time.InceptionTimeClassifier import get_InceptionTime_model
+from src.zoo.inception_time.InceptionTimeClassifier import get_InceptionTime_process_multi_image
+from src.zoo.inception_time.InceptionTimeClassifier import get_InceptionTime_process_single_image
 
-from MODELS.ConstantNet import get_ConstantNet_model
-from MODELS.ConstantNet import get_ConstantNet_process_single_image
-from MODELS.ConstantNet import get_ConstantNet_process_multi_image
+from src.zoo.constant_net.ConstantNet import get_ConstantNet_model
+from src.zoo.constant_net.ConstantNet import get_ConstantNet_process_single_image
+from src.zoo.constant_net.ConstantNet import get_ConstantNet_process_multi_image
 
-from MODELS.ECGTransForm import get_Transformer_Model
-from MODELS.ECGTransForm import get_Transformer_process_single_image
-from MODELS.ECGTransForm import get_Transformer_process_multi_image
+from src.zoo.ecgtransform.ECGTransForm import get_Transformer_Model
+from src.zoo.ecgtransform.ECGTransForm import get_Transformer_process_single_image
+from src.zoo.ecgtransform.ECGTransForm import get_Transformer_process_multi_image
 
-# %% Bugfix - DeepHitSingle, from pcwangustc
-# https://github.com/havakv/pycox/issues/79
 from pycox.models import loss as pycox_loss
 from pycox.models.data import pair_rank_mat
 
-# Original; 6.44ms for 64 values
-# def deephit_loss(scores, labels, censors):
-#     start = time.time()
-#     rank_mat = pair_rank_mat(labels.cpu().numpy(), censors.cpu().numpy())
-#     rank_mat = torch.from_numpy(rank_mat)
-#     rank_mat = rank_mat.to('cuda')
-#     loss_single = pycox_loss.DeepHitSingleLoss(0.2, 0.1)
-#     loss = loss_single(scores, labels, censors, rank_mat)
-#     return loss
-
-# modified; tested to be equivalent on 10k random 512-length values
-# 1.37ms for 64 values
 def deephit_loss(scores, TTE, E):
     TTE = TTE.reshape(-1)
     E = E.reshape(-1)
-    
-    # i refers to row, j refers to column. 
-    # Ei == 0 -> 0
-    # Ei ==1, Ej == 0 and TTEi==TTEj -> 1
-    # Ei ==1, TTEi < TTEj -> 1
     
     E_i_1 = torch.unsqueeze(E==1,1).repeat(1,E.shape[0]) # is Ei 1? 
     E_j_0 = torch.unsqueeze(E==0,0).repeat(E.shape[0],1) # is Ej 0?
@@ -108,8 +54,6 @@ def deephit_loss(scores, TTE, E):
     loss = loss_single(scores, TTE, E, rank_mat)
     return loss
 
-# %% Datasets, Samplers, and Collate functions
-# -- Custom Data Sampler - PyCoxPH needs at least one positive sample per batch
 from torch.utils.data.sampler import BatchSampler
 class Custom_Sampler(BatchSampler):
     """
@@ -171,13 +115,7 @@ class Custom_Sampler(BatchSampler):
     def __len__(self):
         return self.num_samples
         
-#  Dataset functions. PyCox needs everything either frontloaded or done by the dataset (can't access the batch after it's loaded to e.g. normalize the whole thing)
 class Dataset_FuncList(torch.utils.data.Dataset):
-    # Applies functions in func_list, in order, to x, 
-    # Returns x, (y[0], y[1]). y[0] is time (float32), y[1] is event (0 or 1, int)
-    # x,y must be Tensor for CollateFunc
-    # ... Return_Toggle changes if just x, or x,y are returned
-    
     def __init__(self, ECG, dataframe = None, covariates = None, func_list= None, discretize = False, Toggle = 'XY'):
         
         self.ECG = ECG
@@ -231,13 +169,8 @@ def pad_ECG(img): # padd to 4096 length (to match Ribeiro paper)
     return torch.nn.functional.pad(img, (648,648),'constant',value=0) # pad to correct shape
 
 def collate_fn(batch):
-    # batch is a list of tuples of tensors
-    # this takes that list, stacks the tensors, and returns a tuple of stacked tensors
-    # ultimately we have to match ... input, target = dataloader()
-    # ^ lumping x,z into a tuple in the dataset works
     return tt.tuplefy(batch).stack() # demands list of tuples of torch tensors
 
-# %%  ---------------- Start the model
 class GenericModelDeepSurvival(GenericModel):
 
     def __init__(self, args, Data, train_df, valid_df, test_df):
@@ -249,9 +182,9 @@ class GenericModelDeepSurvival(GenericModel):
         self.test_df = test_df
         
         
-        # 0. Process input arguments 
         self.process_args_PyCox(args)
         
+        print("Final Args", args)
         # 1. Adjust data for this model
         self.restructure_data()
         self.prep_normalization_parameters()
@@ -262,23 +195,13 @@ class GenericModelDeepSurvival(GenericModel):
 
         # 2. Grab ECG processing network 
         self.gen_ecg_model()
-        
-        # 3. wrap our network with the fusion modules before building optimizer/scheduler
         self.prep_fusion(out_classes = self.Num_Classes)
-        
-        # 4. Wrap with PyCox model and init optimizer and scheduler
         self.pycox_mdl = self.Get_PyCox_Model() # sets pycox_mdl, optimizer, scheduler
-        
-        # 5. build dataloaders (requires ECG processing model)
         self.prep_dataloaders()
         
-        
 
-# %% the model
     def gen_ecg_model(self):
-        # figures out how to summon model, image adjustment functions
-        
-        # 1 figure out output channel size
+
         if 'x_train' in self.Data.keys():
             n_in_channels = self.Data['x_train'].shape[-1]
         else:
@@ -299,24 +222,15 @@ class GenericModelDeepSurvival(GenericModel):
             self.Adjust_Many_Images = get_ConstantNet_process_multi_image() # pointer to function
             self.Adjust_One_Image = get_ConstantNet_process_single_image() # pointer to function
             
-        if (self.args['Model_Type'] == 'ReservoirMLP'):
-            from MODELS.ReservoirMLP import get_ReservoirMLP, get_ReservoirMLP_process_single_image, get_ReservoirMLP_process_multi_image
-            self.model = get_ReservoirMLP() # get the ECG interpreting model
-            self.Adjust_Many_Images = get_ReservoirMLP_process_multi_image() # pointer to function
-            self.Adjust_One_Image = get_ReservoirMLP_process_single_image() # pointer to function
-            
         if (self.args['Model_Type'] == 'ECGTransForm'):
             print('getting transformer')
             self.model = get_Transformer_Model(self.args, n_in_channels) # get the ECG interpreting model
             self.Adjust_Many_Images = get_Transformer_process_multi_image() # pointer to function
             self.Adjust_One_Image = get_Transformer_process_single_image() # pointer to function
-
             
-# %% augment process_args, models should include this in init
     def process_args_PyCox(self, args):
         self.Process_Args(args) # call generic_model's arg processing
         
-        # now add a few that are generic to pycox models
         if ('num_durations' not in args.keys()):
             args['num_durations'] = '100'
             print('By default, using 100 time intervals')
@@ -324,7 +238,6 @@ class GenericModelDeepSurvival(GenericModel):
         else:
             self.num_durations = int(args['num_durations'])
         
-        # Decide things based on pycox model:
         if ('pycox_mdl' not in args.keys()):
             print('pycox_mdl not in args. exiting')
             quit()
@@ -336,7 +249,6 @@ class GenericModelDeepSurvival(GenericModel):
             self.Num_Classes = 1
             self.Discretize = False
 
-# %% data discretization
     def prep_data_discretization(self):
         self.max_duration = max(self.train_df['Mort_TTE'])
         self.labtrans = LogisticHazard.label_transform(self.num_durations)
@@ -344,37 +256,25 @@ class GenericModelDeepSurvival(GenericModel):
 
     def discretize_data(self):
         tiiime = time.time()
-        if (self.Discretize): # discretizses time-to-event based on [100] time segments
+        if (self.Discretize): 
             a,b = self.labtrans.transform(self.train_df['Mort_TTE'].to_numpy(),self.train_df['Mort_Event'].astype(int).to_numpy())
             self.train_df['Disc_TTE'] = a
-            # self.train_df['E*'] = b
             
             a,b = self.labtrans.transform(self.valid_df['Mort_TTE'].to_numpy(),self.valid_df['Mort_Event'].astype(int).to_numpy())
             self.valid_df['Disc_TTE'] = a
-            # self.valid_df['E*'] = b
             
             a,b = self.labtrans.transform(self.test_df['Mort_TTE'].to_numpy(),self.test_df['Mort_Event'].astype(int).to_numpy())
             self.test_df['Disc_TTE'] = a
-            # self.test_df['E*'] = b
-        
-            # for key in ['y_train', 'y_valid', 'y_test']:
-                # self.Data[key][:,-2], self.Data[key][:,-1] = self.labtrans.transform(self.Data[key][:,-2], self.Data[key][:,-1]) # TTE lives in [:,-2], Event lives in [:,-1]
-        print('GenericModelPyCox: discretize_data T = ', '{:.2f}'.format(time.time()-tiiime))
 
-# %%
-# 1) Prep which functions get called per image
-# 2) Discretize or normalize Data
-# 3) Prep Datasets and DataLoaders
+        print('GenericModelPyCox: discretize_data T = ', '{:.2f}'.format(time.time()-tiiime))
 
     def prep_dataloaders(self):
         a = time.time()
         
-        # make a list of functions to apply to each ECG
         func_list = []
         func_list.append(self.Adjust_One_Image) # adjust each ecg individually after loading (because PyCox is handling training)
         func_list.append(pad_ECG)
         
-        # CoxPH requires one positive case per loss calculation, which the sampler can provide
         if (self.args['pycox_mdl'] == 'CoxPH'):
             One_Pos_Per_GPU_Batch = True
         else:
@@ -393,12 +293,10 @@ class GenericModelDeepSurvival(GenericModel):
         self.test_dataloader = torch.utils.data.DataLoader (self.test_dataset,  batch_size = self.GPU_minibatch_limit, collate_fn=collate_fn, shuffle = False) #DO NOT SHUFFLE
         print('GenericModel_PyCox: Dataloader prep T = ', '{:.2f}'.format(time.time()-a))
 
-# %% Prep pycox model (here so as not to duplicate in train, load, and run)
     def Get_PyCox_Model(self):
         
         self.prep_optimizer_and_scheduler()
         
-        # note: pycox_mdl optimizer is in pycox_mdl.optimizer.optimizer
         if (self.args['pycox_mdl'] == 'LH'):
             pycox_mdl = LogisticHazard(self.model, self.optimizer, duration_index=self.labtrans.cuts)  
         if (self.args['pycox_mdl'] == 'MTLR'):
@@ -411,13 +309,11 @@ class GenericModelDeepSurvival(GenericModel):
         return pycox_mdl
 
 
-# %% Overwrite Train from Generic_Model
     def train(self):
-        # store a copy of the best model available
         Best_Model = copy.deepcopy(self.model)
 
-        train_loss = -1 # in case no training occurs
-        # Try to load a checkpointed model?
+        train_loss = -1
+
         if self.epoch_end > self.epoch_start:
             print('Generic_Model_PyCox.Train(): Training Requested. Loading best then last checkpoints.')
             last_checkpoint_path = os.path.join(self.model_folder_path, 'Checkpoint.pt')
@@ -468,8 +364,6 @@ class GenericModelDeepSurvival(GenericModel):
             else:
                 tmp_LR = 0
             
-            # ----
-            # Run Validation and Checkpoint
             if ( (epoch+1) % self.validate_every ==0):
         
                 # If this is the new best model, save it as the best model
@@ -514,7 +408,6 @@ class GenericModelDeepSurvival(GenericModel):
         self.pycox_mdl.net = self.model
         return train_loss
 
-# %% Overwrite Run, include output discretization from continuous CoxPH model
     def Run_NN (self, my_dataloader):
 
         # CoxPH: compute baseline hazards

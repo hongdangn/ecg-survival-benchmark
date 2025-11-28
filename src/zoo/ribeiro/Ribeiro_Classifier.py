@@ -1,6 +1,6 @@
 
 
-from MODELS.Ribeiro_Support import ResNet1d
+from src.zoo.ribeiro.Ribeiro_Support import ResNet1d
 import torch
 
 def get_ribeiro_model(args, input_channels):

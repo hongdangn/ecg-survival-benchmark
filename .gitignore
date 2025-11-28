@@ -1,2 +1,7 @@
 ecg
 exams.csv
+orig_src
+__pycache__
+HDF5_DATA
+Trained_Models
+/ecg_ssl

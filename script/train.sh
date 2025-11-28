@@ -1,6 +1,6 @@
 python ../train_deep_survival.py \
     --Train_Folder Code15 \
-    --Model_Name ZeroNet_DS_Debug  \
+    --Model_Name ECGTransForm  \
     --Test_Folder Code15 \
     --batch_size 512 \
     --epoch_end 15 \

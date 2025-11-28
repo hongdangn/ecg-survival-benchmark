@@ -2,3 +2,12 @@ pandas
 torch
 torchvision
 h5py
+pycox
+scipy
+scikit-survival
+scikit-learn
+fire
+parameterfree
+wfdb
+matplotlib
+tqdm

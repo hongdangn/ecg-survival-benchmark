@@ -6,18 +6,11 @@
 # Where possible, the original code was kept
 
 import torch
-from MODELS.InceptionTime_Support import Inception, InceptionBlock, InceptionTime
+from src.zoo.inception_time.InceptionTime_Support import Inception, InceptionBlock, InceptionTime
 
 
 def get_InceptionTime_model(args, input_channels):
     
-    # not presently implemented
-    # if ('K_M' in args.keys()):
-    #     K_M = int(args['K_M'])
-    # else:
-    #     K_M = 1
-    #     print('defaulting to kernel mult of 1. InceptionTime kernel sizes are 10,20,40')
-        
     model = InceptionTime(in_channels=input_channels, out_channels=0)
     
     return model

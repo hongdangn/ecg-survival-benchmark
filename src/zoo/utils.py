@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-This file contains generic functions that Model_Runner_[survival type] call
+This includes several functions that may overlap between models
+
+Many implementations are from online tutorials / stackexchange
 """
+
+import torch
+import torch.nn as nn
+import numpy as np
 import os
 import h5py
 import time
@@ -17,11 +23,348 @@ from pycox.evaluation import EvalSurv # concordance and such
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import average_precision_score
 
-from MODELS.Support_Functions import Data_Split_Rand
-from MODELS.Support_Functions import Save_to_hdf5
+# for brier and concordance evaluations
+pd.Series.is_monotonic = pd.Series.is_monotonic_increasing
+from torch.utils.data.sampler import BatchSampler
+
+def Save_NN(epoch, model, path, best_performance_measure=9999999, optimizer=None, scheduler=None, NT=None, NM=None, NS=None):
+
+    Out_Dict = {}
+    Out_Dict['epoch'] = epoch
+    Out_Dict['model_state_dict'] = model.state_dict()
+    Out_Dict['Numpy_Random_State'] = np.random.get_state()
+    Out_Dict['Torch_Random_State'] = torch.get_rng_state()
+    Out_Dict['CUDA_Random_State'] = torch.cuda.get_rng_state()
+    Out_Dict['best_performance_measure'] = best_performance_measure
+    
+    if (optimizer is not None):
+        Out_Dict['optimizer_state_dict'] = optimizer.state_dict()
+    if (scheduler is not None):
+        Out_Dict['scheduler_state_dict'] = scheduler.state_dict()
+        
+    # Normalization Parameters
+    if (NT is not None):
+        Out_Dict['NT'] = NT # normalization type
+        
+    if (NM is not None):
+        Out_Dict['NM'] = NM # normaliation mean per channel
+        
+    if (NS is not None):
+        Out_Dict['NS'] = NS # normalization stdev per channel
+    torch.save(Out_Dict, path)
+    
+# %% Save training args to json
+def Save_Train_Args(path, train_args):
+    import json
+    with open(path, 'w') as file:
+         file.write(json.dumps(train_args)) # use `json.loads` to do the reverse
+
+# %% Split indices of Y into Tr/Val/Test based on ratios
+def Data_Split_Rand( Y, Tr, V, Te):
+    from torch.utils.data import random_split
+    # 1. Separate X and Y. Ratio is given by Tr, V, Te
+    # 2. Track number of Tr, V, Te, per class [for weighted sampling later]
+    # 3. (12/4/2023) prioritize training count, then test count, then validation (because sometimes you get just one training sample...)
+    
+    Train_Inds = []
+    Val_Inds = []
+    Test_Inds = []
+
+    Tr_Count = int(np.ceil(len(Y) * Tr / (Tr + V + Te)))
+    Te_Count = int(np.ceil( (len(Y) - Tr_Count) * Te / (V + Te)))
+    V_Count = len(Y) - Tr_Count - Te_Count
+    
+    Tr_Ind, V_Ind, Te_Ind = random_split(range(len(Y)), [Tr_Count, V_Count, Te_Count])
+    
+    Train_Inds = Train_Inds + list(Tr_Ind)
+    Val_Inds = Val_Inds + list(V_Ind)
+    Test_Inds = Test_Inds + list(Te_Ind)
+      
+    return Train_Inds, Val_Inds, Test_Inds
+
+
+# %% Standardize input shape
+def Structure_Data_NCHW(arr):
+    # We receive a numpy array that is either 2D (N-H)
+    # Or 3D (N-H-W)
+    # or 4D (N-C-H-W)
+    # and we want to expand dims until we get the 4D version
+    if (len(arr.shape)==2): # N-H to N-H-W
+        arr = np.expand_dims(arr,axis=-1)
+        
+    if (len(arr.shape)==3): # N-H-W to N-C-H-W
+        arr = np.expand_dims(arr,axis=1)
+        
+    return arr
+
+
+# %% Normalization
+def Get_Norm_Func_Params (args, Some_Array): # figure out how to normalize (from train set)
+    if ('Norm_Func' not in args.keys()):
+        args['Norm_Func'] = 'nchW'
+        print('By default, using nchW normalization')
+
+    if (args['Norm_Func'] == 'None'):        
+        norm_type = 'No_Norm'
+        u = 0
+        s = 0
+        
+    if (args['Norm_Func'] == 'nChw'):
+        # Get u, s per C
+        norm_type = 'nChw'
+        u = [ np.mean(Some_Array[:,k,:,:]) for k in range(Some_Array.shape[1])]
+        s = [ np.std(Some_Array[:,k,:,:])  for k in range(Some_Array.shape[1])]
+        
+    if (args['Norm_Func'] == 'nchW'):
+        # Get u, s per W
+        norm_type = 'nchW'
+        u = [np.mean(Some_Array[:,:,:,k]) for k in range(Some_Array.shape[3])]
+        s = [np.std(Some_Array[:,:,:,k])  for k in range(Some_Array.shape[3])]
+    
+    return norm_type, u, s # these can be saved
+
+     
+
+
+def Normalize (value, norm_type, u, s): # apply normalization to a batch input (like a test set)
+    # input: batch NCHW pytorch tensor [passed by ref]
+    # output: modified cloned output
+    
+    
+    if norm_type == 'No_Norm':
+        asdf = value
+    
+    if norm_type =='nChw':
+        asdf = torch.stack([ (value[:,k,:,:] - u[k]) / s[k] for k in range(len(u))],dim=1)
+    
+    if norm_type =='nchW':
+        # asdf = torch.stack([ (value[:,:,:,k] - u[k]) / s[k] for k in range(len(u))],dim=3) # RAM hungry, don't use
+        for k in range(len(u)):
+            value[:,:,:,k] = (value[:,:,:,k] - u[k]) / s[k]
+        asdf = value
+        
+    return asdf
+
+
+# %% Loss Functions
+def Get_Loss_Params (args, Train_Y=None): # figure out how to apply losses
+    Loss_Params = {}
+    if ('Loss_Type' in args.keys()):
+        Loss_Params['Type'] = args['Loss_Type']
+    else:
+        Loss_Params['Type'] = 'None'
+        print('Loss_Type not in args - exiting.')
+        quit()
+        
+    # if loss needs weights of 1/count, get weights. Modified from Ribeiro.
+    if ( (Loss_Params['Type'] == 'wSSE') or (Loss_Params['Type']=='wSAE') ):
+        unique_vals, counts = np.unique(Train_Y, return_counts=True)
+        weights = 1 / counts
+        Val_Weight_Map = {int(unique_vals[k]):weights[k] for k in range(len(weights))}
+        Loss_Params['Weight_Map'] = Val_Weight_Map
+    return Loss_Params
+        
+
+def Get_Loss(Model_Out, Correct_Out, Loss_Params): # Get a loss for a batch
+
+    # Classifier losses
+    if (Loss_Params['Type'] == 'CrossEntropyLoss'):
+        temp = nn.CrossEntropyLoss() # takes like 1ms
+        Correct_Out = Correct_Out.type(torch.LongTensor) #  LongTensor has to be set before going to GPU
+        Correct_Out = Correct_Out.to(Model_Out.device)
+        return temp(Model_Out, Correct_Out)
+
+    # Regression Losses 
+    Correct_Out = torch.unsqueeze(Correct_Out,dim=1)
+    
+    if (Loss_Params['Type'] == 'SSE'):
+        return sum(  (Model_Out - Correct_Out)**2  )
+
+    if (Loss_Params['Type'] == 'wSSE'):
+        temp = (Model_Out - Correct_Out)**2 
+        a = [Loss_Params['Weight_Map'][k.item()] for k in Correct_Out]
+        weights = torch.from_numpy( np.array( a ) ).to(Correct_Out.device)
+        weights = weights.unsqueeze(dim=1)
+        temp_scaled = torch.mul(temp, weights)
+        return sum(temp_scaled)
+    
+    if (Loss_Params['Type'] == 'SAE'):
+        return sum(  abs(Model_Out - Correct_Out)  )
+ 
+    if (Loss_Params['Type'] == 'wSAE'):
+        temp = abs(Model_Out - Correct_Out)
+        a = [Loss_Params['Weight_Map'][k.item()] for k in Correct_Out]
+        weights = torch.from_numpy( np.array( a ) ).to(Correct_Out.device)
+        weights = weights.unsqueeze(dim=1)
+        temp_scaled = torch.mul(temp, weights)
+        return sum(temp_scaled)
+
+    return 0
+
+
+    
+# %% Utility: append variable to existing hdf5 file
+def Save_to_hdf5(path, var, var_name):
+    # if hdf5 file DNE, make it
+    # add variable that file, overwriting past entries
+    if (os.path.isfile(path) == False):
+        with h5py.File(path, "w") as f:
+            f.create_dataset(var_name, data = var)
+            print('saved ' + var_name)
+    else:
+        with h5py.File(path, "r+") as f:
+            database_list = [k for k in f.keys()]
+            if var_name in database_list:
+                # updated 08/22/24
+                del f[var_name]
+                f.create_dataset(var_name, data = var, compression='gzip')
+                print('updated ' + var_name)
+            else:
+                f.create_dataset(var_name, data = var, compression='gzip')
+                print('saved ' + var_name)
 
 # %% compatability for old sk-learn: import simps
 #taken directly from  from https://github.com/scipy/scipy/blob/v0.18.1/scipy/integrate/quadrature.py#L298
+def tupleset(t, i, value):
+    l = list(t)
+    l[i] = value
+    return tuple(l)
+
+def _basic_simps(y, start, stop, x, dx, axis):
+    nd = len(y.shape)
+    if start is None:
+        start = 0
+    step = 2
+    slice_all = (slice(None),)*nd
+    slice0 = tupleset(slice_all, axis, slice(start, stop, step))
+    slice1 = tupleset(slice_all, axis, slice(start+1, stop+1, step))
+    slice2 = tupleset(slice_all, axis, slice(start+2, stop+2, step))
+
+    if x is None:  # Even spaced Simpson's rule.
+        result = np.sum(dx/3.0 * (y[slice0]+4*y[slice1]+y[slice2]),
+                        axis=axis)
+    else:
+        # Account for possibly different spacings.
+        #    Simpson's rule changes a bit.
+        h = np.diff(x, axis=axis)
+        sl0 = tupleset(slice_all, axis, slice(start, stop, step))
+        sl1 = tupleset(slice_all, axis, slice(start+1, stop+1, step))
+        h0 = h[sl0]
+        h1 = h[sl1]
+        hsum = h0 + h1
+        hprod = h0 * h1
+        h0divh1 = h0 / h1
+        tmp = hsum/6.0 * (y[slice0]*(2-1.0/h0divh1) +
+                          y[slice1]*hsum*hsum/hprod +
+                          y[slice2]*(2-h0divh1))
+        result = np.sum(tmp, axis=axis)
+    return result
+
+def simps(y, x=None, dx=1, axis=-1, even='avg'):
+    """
+    Integrate y(x) using samples along the given axis and the composite
+    Simpson's rule.  If x is None, spacing of dx is assumed.
+
+    If there are an even number of samples, N, then there are an odd
+    number of intervals (N-1), but Simpson's rule requires an even number
+    of intervals.  The parameter 'even' controls how this is handled.
+
+    Parameters
+    ----------
+    y : array_like
+        Array to be integrated.
+    x : array_like, optional
+        If given, the points at which `y` is sampled.
+    dx : int, optional
+        Spacing of integration points along axis of `y`. Only used when
+        `x` is None. Default is 1.
+    axis : int, optional
+        Axis along which to integrate. Default is the last axis.
+    even : {'avg', 'first', 'str'}, optional
+        'avg' : Average two results:1) use the first N-2 intervals with
+                  a trapezoidal rule on the last interval and 2) use the last
+                  N-2 intervals with a trapezoidal rule on the first interval.
+
+        'first' : Use Simpson's rule for the first N-2 intervals with
+                a trapezoidal rule on the last interval.
+
+        'last' : Use Simpson's rule for the last N-2 intervals with a
+               trapezoidal rule on the first interval.
+
+    See Also
+    --------
+    quad: adaptive quadrature using QUADPACK
+    romberg: adaptive Romberg quadrature
+    quadrature: adaptive Gaussian quadrature
+    fixed_quad: fixed-order Gaussian quadrature
+    dblquad: double integrals
+    tplquad: triple integrals
+    romb: integrators for sampled data
+    cumtrapz: cumulative integration for sampled data
+    ode: ODE integrators
+    odeint: ODE integrators
+
+    Notes
+    -----
+    For an odd number of samples that are equally spaced the result is
+    exact if the function is a polynomial of order 3 or less.  If
+    the samples are not equally spaced, then the result is exact only
+    if the function is a polynomial of order 2 or less.
+
+    """
+    y = np.asarray(y)
+    nd = len(y.shape)
+    N = y.shape[axis]
+    last_dx = dx
+    first_dx = dx
+    returnshape = 0
+    if x is not None:
+        x = np.asarray(x)
+        if len(x.shape) == 1:
+            shapex = [1] * nd
+            shapex[axis] = x.shape[0]
+            saveshape = x.shape
+            returnshape = 1
+            x = x.reshape(tuple(shapex))
+        elif len(x.shape) != len(y.shape):
+            raise ValueError("If given, shape of x must be 1-d or the "
+                             "same as y.")
+        if x.shape[axis] != N:
+            raise ValueError("If given, length of x along axis must be the "
+                             "same as y.")
+    if N % 2 == 0:
+        val = 0.0
+        result = 0.0
+        slice1 = (slice(None),)*nd
+        slice2 = (slice(None),)*nd
+        if even not in ['avg', 'last', 'first']:
+            raise ValueError("Parameter 'even' must be "
+                             "'avg', 'last', or 'first'.")
+        # Compute using Simpson's rule on first intervals
+        if even in ['avg', 'first']:
+            slice1 = tupleset(slice1, axis, -1)
+            slice2 = tupleset(slice2, axis, -2)
+            if x is not None:
+                last_dx = x[slice1] - x[slice2]
+            val += 0.5*last_dx*(y[slice1]+y[slice2])
+            result = _basic_simps(y, 0, N-3, x, dx, axis)
+        # Compute using Simpson's rule on last set of intervals
+        if even in ['avg', 'last']:
+            slice1 = tupleset(slice1, axis, 0)
+            slice2 = tupleset(slice2, axis, 1)
+            if x is not None:
+                first_dx = x[tuple(slice2)] - x[tuple(slice1)]
+            val += 0.5*first_dx*(y[slice2]+y[slice1])
+            result += _basic_simps(y, 1, N-2, x, dx, axis)
+        if even == 'avg':
+            val /= 2.0
+            result /= 2.0
+        result = result + val
+    else:
+        result = _basic_simps(y, 0, N-2, x, dx, axis)
+    if returnshape:
+        x = x.reshape(saveshape)
+    return result
 def tupleset(t, i, value):
     l = list(t)
     l[i] = value
@@ -271,7 +614,7 @@ def Load_Labels(args):
 
     # Train: pull in one dataset or all?
     if (args['Train_Folder'] == 'All'):
-        train_csv_path_C = os.path.join(datapath1, 'HDF5_DATA','Code15','Labels_Code15_mort_032025_pd_8020.csv')
+        train_csv_path_C = os.path.join(datapath1, 'HDF5_DATA','Code15','code15_mort_labels.csv')
         train_csv_path_B = os.path.join(datapath1, 'HDF5_DATA','BCH','BCH_Mort_Labels_042225.csv')
         train_csv_path_M = os.path.join(datapath1, 'HDF5_DATA','MIMICIV','Labels_MIMICIV_mort_032025_pd_8020.csv')
         
@@ -294,7 +637,7 @@ def Load_Labels(args):
         
         # merge datasets
         train_labels = pd.concat((train_labels_C,train_labels_B,train_labels_M)).reset_index(drop=True) # without reset, index = 0,0,0,1,1,1,etc.
-        train_rows = train_labels[train_labels['Test_Train_split_12345']=='tr'].index.values
+        train_rows = train_labels[train_labels['train_test_split']=='train'].index.values
         
 
     # Just one
@@ -307,7 +650,7 @@ def Load_Labels(args):
             train_csv_path = os.path.join(datapath1, 'HDF5_DATA',args['Train_Folder'],'Labels_MIMICIV_mort_032025_pd_8020.csv')
             
         train_labels = pd.read_csv(train_csv_path)
-        train_rows = train_labels[train_labels['Test_Train_split_12345']=='tr'].index.values
+        train_rows = train_labels[train_labels['train_test_split']=='train'].index.values
         
         # Correct for C15 missing train labels
         if (args['Train_Folder'] == 'Code15'):
@@ -325,7 +668,7 @@ def Load_Labels(args):
         test_csv_path = os.path.join(datapath1, 'HDF5_DATA',args['Test_Folder'],'Labels_MIMICIV_mort_032025_pd_8020.csv')
         
     test_labels = pd.read_csv(test_csv_path)
-    test_rows  = test_labels[test_labels['Test_Train_split_12345']=='te'].index.values
+    test_rows  = test_labels[test_labels['train_test_split']=='test'].index.values
     
     # Correct for C15 missing test labels
     if (args['Test_Folder'] == 'Code15'):
@@ -345,13 +688,8 @@ def Load_Labels(args):
             breakpoint()
             
     return  train_df, test_df
-# %%
+
 def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
-    # Handle debugging: limit df if needed
-    # Load ECG; match the SID in case the ECG is out of order 
-    # Input: dataframes, args
-    # Outputs: Data{}, containing ECG and covariates in numpy arrays
-    
     start_time = time.time()
     Data={}
     datapath1 = os.path.dirname(os.getcwd()) # cleverly jump one one folder without referencing \\ (windows) or '/' (E3)
@@ -542,58 +880,8 @@ def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
     # you adjusted the dataframes, so return those as well
     return Data, train_df, valid_df, test_df
     
-
-# %% Clean Data [obsolete 04/25/25 - now handled in raw -> hdf5 conversion]
-# def Clean_Data(Data, args):
-#     # Input: Dictionary Data with keys 'x_train', 'y_train', 'x_test', 'y_test'. Each is a numpy array
-#     # Output: None. Dictionaries are passed by reference, so we change the arrays idrectly
-#     # Task: Clean the data.
-#     # Sometimes time-to-event is '-1.0' meaning no follow up time.
-#     # Sometimes TTE < 0 (recording error?)
-#     # Sometimes ECG (x_train/test) contains NaNs
-#     # Find and trash those indices  
-    
-#     start_time = time.time()
-#     for key in ['y_train', 'y_test']:
-#         if ( (key in Data.keys()) and (len(Data[key].shape) > 1) ):
-#             x_key = 'x' + key[1:]
-            
-#             # mark negative TTE
-#             if (key == 'y_train'):
-#                 neg_inds = np.where(Data[key][:,int(args['y_col_train_time'])] < 0)[0]
-#             elif (key == 'y_test'):
-#                 neg_inds = np.where(Data[key][:,int(args['y_col_test_time'])] < 0)[0]
-#             inds_to_del = neg_inds.tolist()
-            
-#             # mark nan traces (5x faster than summing isnan over the whole array)
-#             for i in range(Data[x_key].shape[0]):
-#                 if (np.isnan(Data[x_key][i]).any()):
-#                     if i not in inds_to_del:
-#                         inds_to_del.append(i)           
-                     
-#             # remove data, avoid calling np.delete on Data cause that doubles RAM - just select the indices to keep instead
-#             if (len(inds_to_del) > 0):
-#                 print('removing ' + str(len(inds_to_del)) + ' inds with nan or negative time')
-#                 inds_to_keep = np.delete( np.arange(Data[key].shape[0]), inds_to_del )
-#                 Data[x_key] = Data[x_key][inds_to_keep] 
-#                 Data[key] = Data[key][inds_to_keep] 
-            
-#     # Don't return anything - Data is a dict and so passed by reff
-#     print('Model_Runner: Checked data for negative time and nan ECG. Data Clean Time: ' + str(time.time()-start_time) )
-
-# %% Horizoning
-# Classifiers have to compact event (1/0) and time-to-event (flt > 0) into a single value (because event->1 as TTE-> 120)
-# This requires picking a time horizon and somehow re-labeling the data or throwing some out
-# Here, we declare that an event with TTE < 'horizon' is a '1', otherwise a '0'.
-# This means that patients that are censored ARE ASSUMED TO HAVE SURVIVED.
-# ... which is imperfect but isn't particularly unreasonable for Code-15 or MIMIC-IV
-
 def Apply_Horizon(train_df, test_df, args):
 
-    # Meant for classifiers 
-    # find which cases have events preceding the 'horizon' arg
-    # marks those as a '1', else 0. [E*]
-    # also append [TTE*]; currently = TTE. That's there in case we want to add right-censoring, which we currently aren't.
     start_time = time.time()
     
     horizon = float(args['horizon'])
@@ -605,22 +893,6 @@ def Apply_Horizon(train_df, test_df, args):
     
     print('Model_Runner: Computed E* for Horizon and augmented Data[y_]. Time Taken: ' + str(time.time()-start_time) )
 
-# %% PyCox Horizoning-step equivalent (doesn't horizon):
-# def Augment_Y(Data, args):
-#     start_time = time.time()
-    
-#     Data['y_train'] = np.concatenate((Data['y_train'], np.expand_dims(Data['y_train'][:,0],1)), axis=1) # PID is assumed to be column 0
-#     Data['y_train'] = np.concatenate((Data['y_train'], np.expand_dims(Data['y_train'][:,int(args['y_col_train_time'])],1)), axis=1)
-#     Data['y_train'] = np.concatenate((Data['y_train'], np.expand_dims(Data['y_train'][:,int(args['y_col_train_event'])],1)), axis=1)
-
-#     # expand y_test - append PID, TTE*, E* @ column inds [-3,-2,-1], respectively
-#     Data['y_test'] = np.concatenate((Data['y_test'], np.expand_dims(Data['y_test'][:,0],1)), axis=1)
-#     Data['y_test'] = np.concatenate((Data['y_test'], np.expand_dims(Data['y_test'][:,int(args['y_col_test_time'])],1)), axis=1)
-#     Data['y_test'] = np.concatenate((Data['y_test'], np.expand_dims(Data['y_test'][:,int(args['y_col_test_event'])],1)), axis=1)
-    
-#     print('Model_Runner: Restructured Data. Total time elapsed: ' + str(time.time()-start_time) ) 
-
-# %% Split Ddata
 def Split_Data(train_df):
     # Split loaded "training" data RANDOMLY BY PATIENT ID
     # Into train / validation based on the random seed.

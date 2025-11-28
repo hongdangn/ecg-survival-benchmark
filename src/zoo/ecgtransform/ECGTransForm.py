@@ -119,11 +119,7 @@ class ecgTransForm(nn.Module):
         x = self.conv_block3(x) #PVL: B x 128 x 514
 
         # Channel Recalibration Module
-        x = self.crm(x) # PVL: same shape
-
-        # Bi-directional Transformer
-        
-        # per https://github.com/emadeldeen24/ECGTransForm/issues/7 , x should be transposed here
+        x = self.crm(x) # PVL: same shape        
         x = torch.transpose(x, 1, 2)
         
         x1 = self.transformer_encoder(x)
@@ -133,9 +129,6 @@ class ecgTransForm(nn.Module):
         x = self.aap(x)
         x_flat = x.reshape(x.shape[0], -1)
         
-        
-        # Modified PVL 03/05/25: return features instead of linear-to-classes
-        # x_out = self.clf(x_flat)
         x_out = x_flat
         
         return x_out

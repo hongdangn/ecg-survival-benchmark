@@ -45,32 +45,23 @@ Currently, all models reshape it into N-C-H-W
 
 """
 
-# handle pycox folder requirement FIRST
 import os
-os.environ['PYCOX_DATA_DIR'] = os.path.join(os.getcwd(),'Mandatory_PyCox_Dir')
 
-# from Model_Runner_Support import get_covariates
-
-from Model_Runner_Support import Load_Labels
-# from Model_Runner_Support import Clean_Data
-from Model_Runner_Support import Load_ECG_and_Cov
-from Model_Runner_Support import Split_Data
-# from Model_Runner_Support import DebugSubset_Data
-from Model_Runner_Support import set_up_train_folders
-from Model_Runner_Support import set_up_test_folders
+from src.zoo.utils import Load_Labels
+from src.zoo.utils import Load_ECG_and_Cov
+from src.zoo.utils import Split_Data
+from src.zoo.utils import set_up_train_folders
+from src.zoo.utils import set_up_test_folders
 
 # evaluation wrappers
-from Model_Runner_Support import Gen_KM_Bootstraps
-from Model_Runner_Support import Gen_Concordance_Brier_No_Bootstrap
-# from Model_Runner_Support import Gen_Concordance_Brier_PID_Bootstrap
-from Model_Runner_Support import Gen_AUROC_AUPRC
-from Model_Runner_Support import save_histogram
+from src.zoo.utils import Gen_KM_Bootstraps
+from src.zoo.utils import Gen_Concordance_Brier_No_Bootstrap
+from src.zoo.utils import Gen_AUROC_AUPRC
+from src.zoo.utils import save_histogram
 
-from MODELS.Support_Functions import Save_to_hdf5
-
-
-
-from MODELS import GenericModelDeepSurvival
+from src.zoo.utils import Save_to_hdf5
+from src.zoo.GenericModelDeepSurvival import GenericModelDeepSurvival
+from src.zoo.utils import simps
 
 import numpy as np
 import torch
@@ -82,48 +73,23 @@ import collections
 collections.Callable = collections.abc.Callable
 
 import argparse
-
-# %% Compatability - bring back older version of scipy simpson function
 import scipy
-from MODELS.Support_Functions import simps
 scipy.integrate.simps = simps
 
-# %% 
-def main(*args):
-    # Initialize parser
-    parser = argparse.ArgumentParser()
     
-    # Just convert the args to a string-string dict so each model handles its own parsing.
-    _, unknown_args = parser.parse_known_args()
-    args = dict(zip([k[2:] for k in unknown_args[:-1:2]],unknown_args[1::2])) # from stackoverflow
-    print(args) #these are all strings!
-    Run_Model(args)
-    
-def Run_Model_via_String_Arr(*args):
-    # Initialize parser
-    parser = argparse.ArgumentParser()
-    
-    # Just convert the args to a string-string dict so each model handles its own parsing.
-    _, unknown_args = parser.parse_known_args(args[0])
-    args = dict(zip([k[2:] for k in unknown_args[:-1:2]],unknown_args[1::2])) # from stackoverflow
-    print(args) #these are all strings!
-    Run_Model(args)
-    
-def Run_Model(args):
-    # input is paired dict of strings named args
+def train(args):
     start_time = time.time()
     
-    # %%1. CUDA check and arg processing
     for i in range(torch.cuda.device_count()):
        print(torch.cuda.get_device_properties(i).name)
        
-    if (torch.cuda.is_available() == False):
+    if not torch.cuda.is_available():
         print('No CUDA. Exiting.')
         exit()
        
     # Grab model name. No point in proceeding without it.
     if ('Model_Name' not in args.keys()):
-        print('Model_Name not specified - cant train or pull models')
+        print('Model_Name is not specified - cant train or pull models')
         exit()
     Model_Type = args['Model_Name'].split('_')[0]
     args['Model_Type'] = Model_Type
@@ -132,41 +98,31 @@ def Run_Model(args):
         print('Train_Folder not specified - cant train or pull models')
         exit()
     
-    # Set Random seeds - should really be from args. Note: "load" model will overwrite these!
     if ('Rand_Seed' in args.keys()):
         args['Rand_Seed'] = int(args['Rand_Seed'])
         
     if ('Rand_Seed' not in args.keys()):
         np.random.seed()
         args['Rand_Seed'] = np.random.randint(70000,80000)
-        print('Rand Seed Not Set. Picking a random number 70,000 - 80,000... ' + str(args['Rand_Seed']))    
+        print('Rand_Seed Not Set. Picking a random number 70,000 - 80,000... ' + str(args['Rand_Seed']))    
     
     np.random.seed(args['Rand_Seed'])
     torch.manual_seed(args['Rand_Seed'])
     torch.backends.cudnn.deterministic = True # make TRUE if you want reproducible results (slower)
     
-    # %% Process data: Load, Clean, Split
     train_df, test_df = Load_Labels(args)       # Data is a dict, is passed by reference 
-    # Clean_Data(Data, args)       # remove TTE<0 and NaN ECG
-    # Apply_Horizon(train_df, test_df, args)    # classifiers need to compact TTE and E into a single value, E*. Augments Data['y_'] for model train/runs without overwriting loaded information.
     train_df, valid_df = Split_Data(train_df)             # splits 'train' data 80/20 into train/val by PID
     
-    # check for dataset contamination
     print('Tr/Te contaminants:',np.intersect1d(train_df.PID.values,test_df.PID.values))
     print('Tr/Va contaminants:',np.intersect1d(train_df.PID.values,valid_df.PID.values))
     print('Va/Te contaminants:',np.intersect1d(test_df.PID.values,valid_df.PID.values))
 
     Data, train_df, valid_df, test_df = Load_ECG_and_Cov(train_df, valid_df, test_df, args)
-    # DebugSubset_Data(Data, train_df, test_df, args) # If args['debug'] == True, limits Data[...] to 1k samples each of tr/val/test.
-
-            
-    # %% 5. set up trained model folders if they  don't exist
     
     set_up_train_folders(args)
     
-    # %% 6. Select model, (maybe) load an existing model. ask for training (runs eval after training reqs met)
     print('Model_Runner:  Got to model init. Total time elapsed: ' ,'{:.2f}'.format(time.time()-start_time) )
-    asdf = GenericModelDeepSurvival.GenericModelDeepSurvival(args, Data, train_df, valid_df, test_df)
+    asdf = GenericModelDeepSurvival(args, Data, train_df, valid_df, test_df)
       
     print('Model_Runner:  Got to Train. Total time elapsed: ' ,'{:.2f}'.format(time.time()-start_time) )
     if( ('Load' in args.keys())):
@@ -174,11 +130,6 @@ def Run_Model(args):
     asdf.train()
         
     
-    # %% Generate and save out results
-    
-    # %% Model Evaluation
-    # To evaluate model we need: dicrete time points, discretized time to event, event 0/1, S(t) per time point
-
     if ('Test_Folder' in args.keys()):
         
         print('Model_Runner:  got to model eval. Total Time elapsed: ' ,'{:.2f}'.format(time.time()-start_time))
@@ -196,15 +147,10 @@ def Run_Model(args):
             cuts, disc_y_t, disc_y_e, surv, surv_df = asdf.Test() 
             
         sample_time_points = cuts # where are we sampling the survival functions?
-        
-        # PyCox assumes test datasets aren't discretized, but we've discretized them, so adjust surv_df (affects concordance measures later)
         surv_df.index = np.arange(num_durations)
         
-        
-        # %% Set up folders and save eval args
         set_up_test_folders(args)
              
-        # %% 15. Save out everything we need to recreate evaluation (or later sub-group concordance): 
         outputs_hdf5_path = os.path.join(args['Model_Eval_Path'], 'Stored_Model_Output.hdf5')
         Save_to_hdf5(outputs_hdf5_path, sample_time_points, 'sample_time_points')
         Save_to_hdf5(outputs_hdf5_path, disc_y_t, 'disc_y_t') # when it really happened
@@ -214,24 +160,13 @@ def Run_Model(args):
         Save_to_hdf5(outputs_hdf5_path, surv, 'surv')
         Save_to_hdf5(outputs_hdf5_path, test_df['SID'], 'SID')        
         
-
-        # %% 16. evlauations
         
-        # Save out KM. Add bootstrapping (20x). Saves KM values out separately in case you want to recreate that.
         Gen_KM_Bootstraps(surv, disc_y_e, disc_y_t, sample_time_points, args)
 
-        # Concordance and Brier Score 
         time_points = [1,2,5,10,999]
-        # across all ECG
-        
-        # Gen_Concordance_Brier_No_Bootstrap(surv_df, disc_y_t, disc_y_e.astype(bool), time_points, sample_time_points, args)
+
         Gen_Concordance_Brier_No_Bootstrap(surv_df, disc_y_t, disc_y_e, time_points, sample_time_points, args)
-        # bootstrap: 1 ECG per patient x 20
-        
-        # NOTE: "ALL" models need to be rebuilt here: C15 and BCH PIDs overlapped, and adjusting labels changes the Tr/Val split!
-        # Gen_Concordance_Brier_PID_Bootstrap(Data, args, disc_y_t, disc_y_e, surv_df, sample_time_points, time_points)
-        
-        # AUROC and AUPRC
+
         time_points = [1,2,5,10] # 999 doesn't work for AUROC
         Gen_AUROC_AUPRC(disc_y_t, disc_y_e, surv, time_points, sample_time_points, args)
         
@@ -239,8 +174,6 @@ def Run_Model(args):
         save_histogram(sample_time_points, disc_y_t, surv, args)
         
         print('Model_Runner: Finished evaluation. Total time elapsed: ' ,'{:.2f}'.format(time.time()-start_time) )
-        
-        # %% 20. Save out some more things 
         
         if ('Multimodal_Out' in args.keys()):
             if (args['Multimodal_Out'] == 'True'):
@@ -280,6 +213,11 @@ def Run_Model(args):
                         Save_to_hdf5(neg_one_path, temp, 'MM_Out')
                         Save_to_hdf5(neg_one_path, neg_one_out, 'neg_one_out')
         
-    #%% Test?
 if __name__ == '__main__':
-   main()
+    parser = argparse.ArgumentParser()
+    
+    # Just convert the args to a string-string dict so each model handles its own parsing.
+    _, unknown_args = parser.parse_known_args()
+    args = dict(zip([k[2:] for k in unknown_args[:-1:2]],unknown_args[1::2])) # from stackoverflow
+    print(args)
+    train(args)

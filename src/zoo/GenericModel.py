@@ -68,64 +68,39 @@ import os
 import copy
 
 # import Support_Functions
-from MODELS.Support_Functions import Save_NN
-from MODELS.Support_Functions import Save_Train_Args
-from MODELS.Support_Functions import Structure_Data_NCHW
-from MODELS.Support_Functions import Get_Norm_Func_Params
-from MODELS.Support_Functions import Normalize
-from MODELS.Support_Functions import Get_Loss_Params
-from MODELS.Support_Functions import Get_Loss
+from src.zoo.utils import Save_NN
+from src.zoo.utils import Save_Train_Args
+from src.zoo.utils import Structure_Data_NCHW
+from src.zoo.utils import Get_Norm_Func_Params
+from src.zoo.utils import Normalize
+from src.zoo.utils import Get_Loss_Params
+from src.zoo.utils import Get_Loss
 
         
-# %% The generic net (encode / decode)
 class FusionModel(nn.Module):
-    # We encode the ECG with some passed model
-    # We process covariates with a linear model
-    # Then we combine them with a fusion model
-    # ... or we just decode the ECG with a linear layer
     
     def __init__(self, ECG_Model, out_classes, fusion_layers, fusion_dim, cov_layers, cov_dim):
-        # inputs:
-        # ECG_Model: a CNN or something that processes ECG to features (encoder)
-        # out_classes: number of output classes from the fusionmodel
-        # direct: if direct, only adds a linear layer between features and out_classes
-        #     if indirect,adds 2 linear/relu chunks first 
-
         super(FusionModel, self).__init__()
-        # ECG processing chunk
         self.ECG_Model = ECG_Model
         
-        # Covariate processing chunk
         self.covariate_module_list = nn.ModuleList()
         for k in range(cov_layers):
             self.covariate_module_list.append(nn.LazyLinear(out_features=cov_dim))
             self.covariate_module_list.append(nn.ReLU())
         
-        # Fusion chunk and final linear chunk
         self.fusion_module_list = nn.ModuleList()
         for k in range(fusion_layers):
             self.fusion_module_list.append(nn.LazyLinear(out_features=fusion_dim))
             self.fusion_module_list.append(nn.ReLU())
             
         self.fusion_module_list.append(nn.LazyLinear(out_features=out_classes))
-        
-        # extra variables in case we want to return the '-1' layer
         self.return_second_to_last_layer = False
         
         
     def forward(self, x, z=torch.empty([0,0])):
-        # x - ECG
-        # z - covariates - float32
-        
-        # process ECG
+
         a = self.ECG_Model(x) 
         
-        # process covariates and append. 
-        # only happens if 1) covariates provided and 2) covariate modules initialized
-
-        # we send a single torch.tensor([]) in Classifier_Cox cases with no covariates
-        # and we send a tensor([], device='cuda:0', size=(64, 0)) in Deep_survival cases iwth no covariates
-        # ... skip covariate processing there
         if (z.nelement()>0):
             if (len(self.covariate_module_list) > 0):
                 b = z
@@ -133,26 +108,20 @@ class FusionModel(nn.Module):
                     b = covariate_layer(b)
                 a = torch.concatenate( (a,b),dim=1)
         
-        # apply fusion layers (includes final linear layer)
         for i,fusion_layer in enumerate(self.fusion_module_list):
             
-            # if you want to return the second-to-last layer, do so here
-            if (i == len(self.fusion_module_list) - 1 ): # when on last layer
+            if (i == len(self.fusion_module_list) - 1 ): 
                 if(self.return_second_to_last_layer): 
                     return a
                 
-            # otherwise keep applying layers
             a = fusion_layer(a)
             
         return a
 
-    
-# %%
 class GenericModel:
-    def __init__(self): # doesn't automatically init; generic_model_x should call/overwrite/extend the generic functions here
+    def __init__(self):
         pass
     
-    # %% Init components
     def Process_Args(self, args):
         self.args = args
         
@@ -160,8 +129,6 @@ class GenericModel:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print('Set to Run on ' + str(self.device))
         
-        
-        # Optimizer
         if ('optimizer' in args.keys()):
             self.optimizer_name = str(args['optimizer'])
         else:
@@ -169,35 +136,12 @@ class GenericModel:
             print('GenericModel: By default, using adam optimizer')
 
         if (self.optimizer_name == 'Adam'):
-            if ('Adam_wd' in args.keys()):
-                self.Adam_wd = float(args['Adam_wd'])
-            else:
-                self.Adam_wd = 0.01 # default weight decay on Adam
+            self.Adam_wd = float(args['Adam_wd']) if args.get('Adam_wd', -1) != -1 else 0.01
         
-        # Epochs and Validation
-        if ('epoch_start' in args.keys()):
-            self.epoch_start = int(args['epoch_start'])
-        else:
-            self.epoch_start = 0
-            print('GenericModel: By default, starting at epoch 0')
-            
-        if ('epoch_end' in args.keys()):
-            self.epoch_end = int(args['epoch_end'])
-        else:
-            self.epoch_end = -1
-            print('GenericModel: By default, ending after 0 training epochs')
-            
-        if ('validate_every' in args.keys()):
-            self.validate_every = int(args['validate_every'])
-        else:
-            self.validate_every = 1
-            print('GenericModel: By default, validating every epoch')
-            
-        if ('early_stop' in args.keys()):
-            self.early_stop = int(args['early_stop'])
-        else:
-            self.early_stop = -1
-            print('GenericModel: By default, no early stopping (args[early_stop]=-1)')
+        self.epoch_start = int(args['epoch_start']) if args.get('epoch_start', -1) != -1 else 0
+        self.epoch_end = int(args['epoch_end']) if args.get('epoch_end', -2) != -2 else -1
+        self.validate_every = int(args['validate_every']) if args.get('validate_every', -1) != -1 else 1
+        self.early_stop = int(args['early_stop']) if args.get('early_stop', -2) != -2 else -1
             
         # Batch Size
         if ('batch_size' in args.keys()):
@@ -240,14 +184,10 @@ class GenericModel:
             else:
                 self.min_lr=1e-2 # scaled by 1e-1 later
 
-        # Model Folder Path
         self.model_folder_path = args['Model_Folder_Path']
-        
-        # Prep training parameters (that can be overwritten by load() )
         self.Val_Best_Loss = 9999999
         self.Perf = []
         
-    # %% Data pieces
     def restructure_data(self):
         a = time.time()
         for key in ['ECG_train', 'ECG_valid', 'ECG_test']:
@@ -270,8 +210,6 @@ class GenericModel:
                 self.Data[key] = Normalize(torch.Tensor(self.Data[key]), self.Normalize_Type, self.Normalize_Mean, self.Normalize_StDev)
         print('GenericModel: normalize_data T = ', '{:.2f}'.format(time.time()-a))
         
-# %% Network pieces
-    # %% Fusion pieces
     def prep_fusion(self, out_classes = 2):
         
         # Process Fusion args
