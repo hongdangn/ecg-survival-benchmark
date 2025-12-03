@@ -11,7 +11,30 @@ from models.masked.encoder.vit import TransformerBlock
 __all__ = ['ST_MEM_ViT', 'st_mem_vit_small', 'st_mem_vit_base']
 
 
-class ST_MEM_ViT(nn.Module):
+class Gating(nn.Module):
+    def __init__(self, input_dim = 768, num_experts = 12, dropout_rate = 0.1):
+        super(Gating, self).__init__()
+        
+        self.net = nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, 256),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(256, 128),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, num_experts)
+        )
+
+    def forward(self, x):
+        """
+        x: tensor of shape (batch_size, dim)
+        returns: tensor of shape (batch_size, num_experts)
+        """
+        return torch.softmax(self.net(x), dim = 1)
+
+
+class ST_MEM_ViT_MoL(nn.Module):
     def __init__(
         self,
         seq_len: int,
@@ -48,6 +71,8 @@ class ST_MEM_ViT(nn.Module):
 
         self.width = width
         self.depth = depth
+        self.avg = nn.AvgPool1d(depth, depth)
+
         # embedding layers
         num_patches = seq_len // patch_size
         patch_dim = patch_size
@@ -79,6 +104,7 @@ class ST_MEM_ViT(nn.Module):
             self.add_module(f'block{i}', block)
         self.dropout = nn.Dropout(drop_out_rate)
         self.norm = nn.LayerNorm(width)
+        self.gating = Gating(input_dim = width, num_experts = depth)
         
         # classifier head
         # self.head = nn.Identity() if num_classes is None else nn.Linear(width, num_classes)
@@ -131,19 +157,32 @@ class ST_MEM_ViT(nn.Module):
         x = x + lead_embeddings
         x = rearrange(x, 'b c n p -> b (c n) p')
         x = self.dropout(x)
+        x_transformer = x
+        layerout = []
+        
         for i in range(self.depth):
             x = getattr(self, f'block{i}')(x)
+            # remove SEP embeddings
+            x_rearrange = rearrange(x, 'b (c n) p -> b c n p', c = num_leads)
+            x_wo_sep = x_rearrange[:, :, 1:-1, :]
+            x_out = torch.mean(x_wo_sep, dim = (1, 2))
+            layerout.append(x_out)
 
-        # remove SEP embeddings
-        x = rearrange(x, 'b (c n) p -> b c n p', c = num_leads)
-        x = x[:, :, 1:-1, :]
-
-        x = torch.mean(x, dim = (1, 2))
-        return self.norm(x)
+        x_transformer_rearrange = rearrange(x_transformer, 'b (c n) p -> b c n p', c = num_leads)
+        x_transformer_rearrange = x_transformer_rearrange[:, :, 1:-1, :]
+        x_transformer_out = torch.mean(x_transformer_rearrange, dim = (1, 2))
+        
+        return layerout, x_transformer_out
 
     def forward(self, series):
-        x = self.forward_encoding(series)
-        return self.head(x)
+        layerout, x_transformer_out = self.forward_encoding(series)
+        x_stack = torch.stack(layerout, dim = 2)
+                     
+        # Apply gating mechanism
+        weights = self.gating(x_transformer_out)  # Shape: (batch_size, num_experts)
+        x_fused = (x_stack.permute(0, 2, 1) * weights.unsqueeze(-1)).sum(dim = 1)
+
+        return self.head(self.norm(x_fused))
 
     def __repr__(self):
         print_str = f"{self.__class__.__name__}(\n"
@@ -161,21 +200,21 @@ def Adjust_Many_Images(image_batch):
     image_batch = torch.transpose(image_batch[:,0,:,:],1,2) # This model wants data N-Chan-Len
     return image_batch
 
-def get_STMemVIT_process_single_image():
+def get_STMemVITMOL_process_single_image():
     return Adjust_Image
 
-def get_STMemVIT_process_multi_image():
+def get_STMemVITMOL_process_multi_image():
     return Adjust_Many_Images
 
-def get_STMemVIT(args, num_leads = 12, num_classes = None, seq_len = 2800, patch_size = 50):
+def get_STMemVITMOL(args, num_leads = 12, num_classes = None, seq_len = 2800, patch_size = 50):
     model_args = dict(
         seq_len = seq_len,
         patch_size = patch_size,
         num_leads = num_leads,
         num_classes = num_classes,
-        width = 767,
+        width = 768,
         depth = 12,
         heads = 6,
         mlp_dim = 3072,
     )
-    return ST_MEM_ViT(**model_args)
+    return ST_MEM_ViT_MoL(**model_args)

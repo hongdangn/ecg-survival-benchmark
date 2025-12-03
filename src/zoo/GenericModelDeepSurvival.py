@@ -35,6 +35,7 @@ from src.zoo.ecgtransform.ECGTransForm import get_Transformer_process_single_ima
 from src.zoo.ecgtransform.ECGTransForm import get_Transformer_process_multi_image
 
 from src.zoo.st_mem.STMemVIT import get_STMemVIT, get_STMemVIT_process_single_image, get_STMemVIT_process_multi_image
+from src.zoo.st_mem.STMemVITMOL import get_STMemVITMOL, get_STMemVITMOL_process_single_image, get_STMemVITMOL_process_multi_image
 
 from pycox.models import loss as pycox_loss
 from pycox.models.data import pair_rank_mat
@@ -208,6 +209,10 @@ class GenericModelDeepSurvival(GenericModel):
             n_in_channels = self.Data['x_train'].shape[-1]
         else:
             n_in_channels = 12
+        if (self.args['Model_Type'] == 'STMemVITMOL'):
+            self.model = get_STMemVITMOL(self.args) # get the ECG interpreting model
+            self.Adjust_Many_Images = get_STMemVITMOL_process_multi_image() # pointer to function
+            self.Adjust_One_Image = get_STMemVITMOL_process_single_image() # pointer to function
 
         if (self.args['Model_Type'] == 'STMemVIT'):
             self.model = get_STMemVIT(self.args) # get the ECG interpreting model
