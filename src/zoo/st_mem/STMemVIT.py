@@ -5,11 +5,7 @@ import torch.nn as nn
 from einops import rearrange
 from einops.layers.torch import Rearrange
 import torch.nn.functional as F
-from models.masked.encoder.vit import TransformerBlock
-
-
-__all__ = ['ST_MEM_ViT', 'st_mem_vit_small', 'st_mem_vit_base']
-
+from .vit import TransformerBlock
 
 class ST_MEM_ViT(nn.Module):
     def __init__(
