@@ -1,11 +1,11 @@
 python ./train_deep_survival.py \
     --Train_Folder Code15 \
-    --Model_Name ECGTransForm  \
+    --Model_Name STMemVIT  \
     --Test_Folder Code15 \
-    --batch_size 512 \
-    --epoch_end 15 \
+    --batch_size 2 \
+    --epoch_end 2 \
     --validate_every 1 \
-    --GPU_minibatch_limit 64 \
+    --GPU_minibatch_limit 4 \
     --Eval_Dataloader Test \
     --Model_Eval_Path /train/code15 \
     --optimizer Adam \
