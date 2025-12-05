@@ -1,0 +1,13 @@
+// who wants to activate conda env, just select the interpreter by ctrl + shift + p -> Python: select interpreter
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}

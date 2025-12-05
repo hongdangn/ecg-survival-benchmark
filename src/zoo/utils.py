@@ -201,12 +201,7 @@ def Get_Loss(Model_Out, Correct_Out, Loss_Params): # Get a loss for a batch
 
     return 0
 
-
-    
-# %% Utility: append variable to existing hdf5 file
 def Save_to_hdf5(path, var, var_name):
-    # if hdf5 file DNE, make it
-    # add variable that file, overwriting past entries
     if (os.path.isfile(path) == False):
         with h5py.File(path, "w") as f:
             f.create_dataset(var_name, data = var)
@@ -223,8 +218,6 @@ def Save_to_hdf5(path, var, var_name):
                 f.create_dataset(var_name, data = var, compression='gzip')
                 print('saved ' + var_name)
 
-# %% compatability for old sk-learn: import simps
-#taken directly from  from https://github.com/scipy/scipy/blob/v0.18.1/scipy/integrate/quadrature.py#L298
 def tupleset(t, i, value):
     l = list(t)
     l[i] = value
@@ -607,14 +600,14 @@ def simps(y, x=None, dx=1, axis=-1, even='avg'):
 #     print('unpared t test: followup T ~ pos/neg:')
 #     print(ttest_ind (pos_cases[:,tte_index],neg_cases[:,tte_index]))
 
-# %% Load Data
 def Load_Labels(args):
     start_time = time.time()
-    datapath1 = os.path.dirname(os.getcwd()) # cleverly jump one one folder without referencing \\ (windows) or '/' (E3)
+    datapath1 = os.getcwd()
+    # datapath1 = os.path.dirname(os.getcwd()) # cleverly jump one one folder without referencing \\ (windows) or '/' (E3)
 
     # Train: pull in one dataset or all?
     if (args['Train_Folder'] == 'All'):
-        train_csv_path_C = os.path.join(datapath1, 'HDF5_DATA','Code15','code15_mort_labels.csv')
+        train_csv_path_C = os.path.join(datapath1, 'HDF5_DATA','Code15','Labels_Code15_mort_032025_pd_8020.csv')
         train_csv_path_B = os.path.join(datapath1, 'HDF5_DATA','BCH','BCH_Mort_Labels_042225.csv')
         train_csv_path_M = os.path.join(datapath1, 'HDF5_DATA','MIMICIV','Labels_MIMICIV_mort_032025_pd_8020.csv')
         
@@ -656,7 +649,6 @@ def Load_Labels(args):
         if (args['Train_Folder'] == 'Code15'):
             print('C15: Converting Mort_Event to Bool')
             train_labels['Mort_Event'] = train_labels['Mort_Event'].values.astype(bool)
-         # Account for C15/BCH PID overlap by -1*PID here so we stil check against overlap with test set
             train_labels['PID'] = -train_labels['PID'].values
 
     # Pull Test Data
@@ -670,11 +662,9 @@ def Load_Labels(args):
     test_labels = pd.read_csv(test_csv_path)
     test_rows  = test_labels[test_labels['train_test_split']=='test'].index.values
     
-    # Correct for C15 missing test labels
     if (args['Test_Folder'] == 'Code15'):
         print('C15: Converting Mort_Event to Bool')
         test_labels['Mort_Event'] = test_labels['Mort_Event'].values.astype(bool)
-    # Account for C15/BCH PID overlap by -1*PID in test set
         test_labels['PID'] = -test_labels['PID'].values
     
     # 3. split labels into test/train
@@ -692,7 +682,8 @@ def Load_Labels(args):
 def Load_ECG_and_Cov(train_df, valid_df, test_df, args):
     start_time = time.time()
     Data={}
-    datapath1 = os.path.dirname(os.getcwd()) # cleverly jump one one folder without referencing \\ (windows) or '/' (E3)
+    datapath1 = os.getcwd()
+    # datapath1 = os.path.dirname(os.getcwd()) # cleverly jump one one folder without referencing \\ (windows) or '/' (E3)
     
     # If pulling all training data
     if (args['Train_Folder'] == 'All'):
@@ -1056,7 +1047,6 @@ def asdf(arrdict):
     arrdict['a'] = arrdict['a'][1:]
     return arrdict
 
-# %% metrics and wrappers
 def get_surv_briercordance(disc_y_t, disc_y_e, surv_df, target_times, time_points):
     # disc_y_t - (N,) int numpy array of discretized times when event occurs
     # disc_y_e - (N,) int or bool numpy array of whether event occurs

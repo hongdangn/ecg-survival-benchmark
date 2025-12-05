@@ -5,3 +5,5 @@ __pycache__
 HDF5_DATA
 Trained_Models
 /ecg_ssl
+/note.txt
+/.vsccode

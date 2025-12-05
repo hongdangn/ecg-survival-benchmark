@@ -17,7 +17,6 @@ def get_ConstantNet_model(const_value):
     return ConstantNet(const_value)
     
              
-# %% image processing
 def Adjust_Image(single_image):
     single_image = torch.transpose(single_image, 1,2)
     return single_image[0] # Just chan x leng, so 12 x 4k

@@ -1,6 +1,4 @@
 
-# %% appened PVL 03 05 2025
-
   
 def get_Transformer_Model(args, input_channels):
     

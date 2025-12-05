@@ -11,3 +11,4 @@ parameterfree
 wfdb
 matplotlib
 tqdm
+einops

@@ -36,6 +36,13 @@ from src.zoo.ecgtransform.ECGTransForm import get_Transformer_process_multi_imag
 
 from src.zoo.st_mem.STMemVIT import get_STMemVIT, get_STMemVIT_process_single_image, get_STMemVIT_process_multi_image
 from src.zoo.st_mem.STMemVITMOL import get_STMemVITMOL, get_STMemVITMOL_process_single_image, get_STMemVITMOL_process_multi_image
+from src.zoo.anhphu_net.st_mem import get_STMem
+from src.zoo.anhphu_net.st_mem import get_STMem_process_multi_image
+from src.zoo.anhphu_net.st_mem import get_STMem_process_single_image
+
+from src.zoo.anhphu_net.st_mem_vit import get_STMem_VIT
+from src.zoo.anhphu_net.st_mem_vit import get_STMemVIT_process_multi_image
+from src.zoo.anhphu_net.st_mem_vit import get_STMemVIT_process_single_image
 
 from pycox.models import loss as pycox_loss
 from pycox.models.data import pair_rank_mat
@@ -51,7 +58,7 @@ def deephit_loss(scores, TTE, E):
     
     a = torch.mul(torch.mul(E_i_1,torch.eq(TTE_i,TTE_j)), E_j_0)
     b = torch.mul(E_i_1,torch.lt(TTE_i,TTE_j))
-    rank_mat = a+b # is bool on CUDA
+    rank_mat = a+b 
 
     loss_single = pycox_loss.DeepHitSingleLoss(0.2, 0.1)
     loss = loss_single(scores, TTE, E, rank_mat)
@@ -209,15 +216,16 @@ class GenericModelDeepSurvival(GenericModel):
             n_in_channels = self.Data['x_train'].shape[-1]
         else:
             n_in_channels = 12
-        if (self.args['Model_Type'] == 'STMemVITMOL'):
-            self.model = get_STMemVITMOL(self.args) # get the ECG interpreting model
-            self.Adjust_Many_Images = get_STMemVITMOL_process_multi_image() # pointer to function
-            self.Adjust_One_Image = get_STMemVITMOL_process_single_image() # pointer to function
 
         if (self.args['Model_Type'] == 'STMemVIT'):
-            self.model = get_STMemVIT(self.args) # get the ECG interpreting model
+            self.model = get_STMem_VIT(self.args) # get the ECG interpreting model
             self.Adjust_Many_Images = get_STMemVIT_process_multi_image() # pointer to function
             self.Adjust_One_Image = get_STMemVIT_process_single_image() # pointer to function
+        
+        if (self.args['Model_Type'] == 'STMem'):
+            self.model = get_STMem(self.args) # get the ECG interpreting model
+            self.Adjust_Many_Images = get_STMem_process_multi_image() # pointer to function
+            self.Adjust_One_Image = get_STMem_process_single_image() # pointer to function
         
         if (self.args['Model_Type'] == 'Ribeiro'):
             self.model = get_ribeiro_model(self.args, n_in_channels) # get the ECG interpreting model
@@ -310,13 +318,13 @@ class GenericModelDeepSurvival(GenericModel):
         self.prep_optimizer_and_scheduler()
         
         if (self.args['pycox_mdl'] == 'LH'):
-            pycox_mdl = LogisticHazard(self.model, self.optimizer, duration_index=self.labtrans.cuts)  
+            pycox_mdl = LogisticHazard(self.model, self.optimizer, device=self.device, duration_index=self.labtrans.cuts)  
         if (self.args['pycox_mdl'] == 'MTLR'):
-            pycox_mdl = MTLR(self.model, self.optimizer, duration_index=self.labtrans.cuts)
+            pycox_mdl = MTLR(self.model, self.optimizer, device=self.device, duration_index=self.labtrans.cuts)
         if (self.args['pycox_mdl'] == 'CoxPH'):
-            pycox_mdl = CoxPH(self.model, self.optimizer)
+            pycox_mdl = CoxPH(self.model, self.optimizer, device=self.device)
         if (self.args['pycox_mdl'] == 'DeepHit'):
-            pycox_mdl = DeepHitSingle(self.model, self.optimizer, duration_index=self.labtrans.cuts, loss = deephit_loss)
+            pycox_mdl = DeepHitSingle(self.model, self.optimizer, device=self.device, duration_index=self.labtrans.cuts, loss = deephit_loss)
             
         return pycox_mdl
 
@@ -413,7 +421,6 @@ class GenericModelDeepSurvival(GenericModel):
                 val_perfs = np.array([k[2] for k in self.Perf])
                 if (self.early_stop > 0):
                     if (len(val_perfs) - (np.argmin(val_perfs) + 1 ) ) >= self.early_stop:
-                        # ^ add one: len_val_perfs is num trained epochs (starts at 1), but argmin starts at 0.
                         break
         
         self.model = copy.deepcopy(Best_Model)
@@ -469,7 +476,6 @@ class GenericModelDeepSurvival(GenericModel):
         cuts = self.labtrans.cuts # discretization points
         return cuts, t, d, surv , surv_df
 
-    # %% Test
     def Test(self, Which_Dataloader = 'Test'):
 
         if (Which_Dataloader == 'Train'): # If we want to evaluate on train, we need to change the dataloader return param first
@@ -489,7 +495,6 @@ class GenericModelDeepSurvival(GenericModel):
             cuts, t, d, surv, surv_df  = self.Run_NN(self.test_dataloader) # this is an UNSHUFFLED dataloader sent through TorchTuples (only output x, can't recover shufled y if shuffled)
         return cuts, t, d, surv, surv_df
 
-# %% Model Loading
     def Load(self, best_or_last):
         
         Import_Dict = self.Load_Checkpoint(best_or_last)   
