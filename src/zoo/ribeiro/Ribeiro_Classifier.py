@@ -4,7 +4,6 @@ from src.zoo.ribeiro.Ribeiro_Support import ResNet1d
 import torch
 
 def get_ribeiro_model(args, input_channels):
-    print('Ribeiro Classifier currently expects signals to have length 4096')
     
     # 1. Process args to figure out how to set up the ribeiro classifier
     if ('seq_length' in args.keys()):
@@ -37,6 +36,9 @@ def get_ribeiro_model(args, input_channels):
         kernel_size = 17
         
     # --
+    seq_length = 1000
+    print(f'Ribeiro Classifier currently expects signals to have length {seq_length}')
+    net_seq_lengh = [1000, 500, 100, 50, 25]
     
     model = ResNet1d(input_dim=(input_channels, seq_length),
                      blocks_dim=list(zip(net_filter_size, net_seq_lengh)),

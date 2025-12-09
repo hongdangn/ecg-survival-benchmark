@@ -163,7 +163,7 @@ def get_STMemVIT_process_single_image():
 def get_STMemVIT_process_multi_image():
     return Adjust_Many_Images
 
-def get_STMemVIT(args, num_leads = 12, num_classes = None, seq_len = 2800, patch_size = 50):
+def get_STMemVIT(args, num_leads = 12, num_classes = None, seq_len = 1000, patch_size = 50):
     model_args = dict(
         seq_len = seq_len,
         patch_size = patch_size,

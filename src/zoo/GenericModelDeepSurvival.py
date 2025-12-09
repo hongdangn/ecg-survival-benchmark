@@ -36,13 +36,10 @@ from src.zoo.ecgtransform.ECGTransForm import get_Transformer_process_multi_imag
 
 from src.zoo.st_mem.STMemVIT import get_STMemVIT, get_STMemVIT_process_single_image, get_STMemVIT_process_multi_image
 from src.zoo.st_mem.STMemVITMOL import get_STMemVITMOL, get_STMemVITMOL_process_single_image, get_STMemVITMOL_process_multi_image
+
 from src.zoo.anhphu_net.st_mem import get_STMem
 from src.zoo.anhphu_net.st_mem import get_STMem_process_multi_image
 from src.zoo.anhphu_net.st_mem import get_STMem_process_single_image
-
-from src.zoo.anhphu_net.st_mem_vit import get_STMem_VIT
-from src.zoo.anhphu_net.st_mem_vit import get_STMemVIT_process_multi_image
-from src.zoo.anhphu_net.st_mem_vit import get_STMemVIT_process_single_image
 
 from pycox.models import loss as pycox_loss
 from pycox.models.data import pair_rank_mat
@@ -111,14 +108,13 @@ class Custom_Sampler(BatchSampler):
                 while (k < self.num_samples):
                     start_ind = k
                     end_ind = min(k+self.batch_size, self.num_samples)
-                    if (sum (self.Mort_Event[Random_Indices[start_ind:end_ind]]) <0.5): # switched "+1" to "-1" 09/24/24
+                    if (sum (self.Mort_Event[Random_Indices[start_ind:end_ind]]) <0.5):
                         Random_Indices[end_ind-1] = Replacement_Indices[Replace_With_Index]
                         Replace_With_Index = Replace_With_Index+1
                     k = k + self.batch_size
        
             yield from iter(Random_Indices)
             
-        # sometimes (evaluation) we just want to return the dataset without shuffling
         else:
             yield from range(self.num_samples)
 
@@ -217,8 +213,13 @@ class GenericModelDeepSurvival(GenericModel):
         else:
             n_in_channels = 12
 
+        if (self.args['Model_Type'] == 'STMemVITMOL'):
+            self.model = get_STMemVITMOL(self.Num_Classes) # get the ECG interpreting model
+            self.Adjust_Many_Images = get_STMemVITMOL_process_multi_image() # pointer to function
+            self.Adjust_One_Image = get_STMemVITMOL_process_single_image() # pointer to function
+
         if (self.args['Model_Type'] == 'STMemVIT'):
-            self.model = get_STMem_VIT(self.args) # get the ECG interpreting model
+            self.model = get_STMemVIT(self.args) # get the ECG interpreting model
             self.Adjust_Many_Images = get_STMemVIT_process_multi_image() # pointer to function
             self.Adjust_One_Image = get_STMemVIT_process_single_image() # pointer to function
         
@@ -293,7 +294,7 @@ class GenericModelDeepSurvival(GenericModel):
         
         func_list = []
         func_list.append(self.Adjust_One_Image) # adjust each ecg individually after loading (because PyCox is handling training)
-        func_list.append(pad_ECG)
+        # func_list.append(pad_ECG)
         
         if (self.args['pycox_mdl'] == 'CoxPH'):
             One_Pos_Per_GPU_Batch = True
@@ -405,7 +406,7 @@ class GenericModelDeepSurvival(GenericModel):
                 Save_Train_Args(os.path.join(self.model_folder_path,'Train_Args.txt'), self.args)
                 
                 # Update Progress
-                new_perf = [epoch, train_loss, val_loss, tmp_LR , epoch_end_time - epoch_start_time]
+                new_perf = [epoch, train_loss, val_loss, tmp_LR, epoch_end_time - epoch_start_time]
                 print(new_perf)
                 self.Perf.append(new_perf)
                 

@@ -1,7 +1,8 @@
 python train_deep_survival.py \
     --Train_Folder Code15 \
-    --Model_Name STMemVIT \
+    --Model_Name STMemVITMOL \
     --Test_Folder Code15 \
+    --load_pretrained True \
     --batch_size 1 \
     --epoch_end 15 \
     --validate_every 1 \
