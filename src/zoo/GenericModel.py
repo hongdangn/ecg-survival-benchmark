@@ -124,8 +124,9 @@ class GenericModel:
     
     def Process_Args(self, args):
         self.args = args
-        
-        self.device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+        self.gpu_id = args['gpu_id']
+
+        self.device = torch.device("cuda:" + str(self.gpu_id) if torch.cuda.is_available() else "cpu")
         print('Set to Run on ' + str(self.device))
         
         if ('optimizer' in args.keys()):

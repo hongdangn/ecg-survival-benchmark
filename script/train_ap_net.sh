@@ -3,8 +3,9 @@ python train_deep_survival.py \
     --Model_Name STMemVITMOL \
     --Test_Folder Code15 \
     --load_pretrained True \
-    --batch_size 1 \
-    --epoch_end 15 \
+    --batch_size 4 \
+    --gpu_id 2 \
+    --epoch_end 10 \
     --validate_every 1 \
     --GPU_minibatch_limit 2 \
     --Eval_Dataloader Test \

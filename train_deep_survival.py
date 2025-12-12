@@ -46,6 +46,8 @@ Currently, all models reshape it into N-C-H-W
 """
 
 import os
+import sys
+sys.path.append(os.getcwd())
 
 from src.zoo.utils import Load_Labels
 from src.zoo.utils import Load_ECG_and_Cov
@@ -128,7 +130,6 @@ def train(args):
     if( ('Load' in args.keys())):
         asdf.Load(args['Load'])
     asdf.train()
-        
     
     if ('Test_Folder' in args.keys()):
         
@@ -169,8 +170,6 @@ def train(args):
 
         time_points = [1,2,5,10] # 999 doesn't work for AUROC
         Gen_AUROC_AUPRC(disc_y_t, disc_y_e, surv, time_points, sample_time_points, args)
-        
-        # histogram
         save_histogram(sample_time_points, disc_y_t, surv, args)
         
         print('Model_Runner: Finished evaluation. Total time elapsed: ' ,'{:.2f}'.format(time.time()-start_time) )
@@ -178,7 +177,6 @@ def train(args):
         if ('Multimodal_Out' in args.keys()):
             if (args['Multimodal_Out'] == 'True'):
                 
-                # Per Train, Validation, Test
                 for eval_key in ['Train', 'Validation', 'Test']:
                     
                     if (eval_key == 'Train'):
@@ -189,7 +187,6 @@ def train(args):
                         y_key = 'y_test'
                         
                     # save the model's predictions at the 1 month mark
-                    
                     multim_path = os.path.join(args['Model_Eval_Path'], 'Multimodal_Prediction_Out_'+eval_key+'.csv')
                     
                     # PID, TTE*, E* @ column inds [-3,-2,-1], respectively

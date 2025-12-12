@@ -4,6 +4,7 @@ orig_src
 __pycache__
 HDF5_DATA
 Trained_Models
+/physionet.org
 /ecg_ssl
 /note.txt
 /.vsccode

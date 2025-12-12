@@ -536,7 +536,6 @@ class GenericModelDeepSurvival(GenericModel):
             print("NO scheduler loaded")
         # self.Load_Random_State(Import_Dict)
 
-    # %%  save out the outputs at the -1'st layer of the model
     def Get_Features_Out(self, Which_Dataloader = 'Test'):
         outputs = []
         correct_outputs = [] 
@@ -581,12 +580,7 @@ class GenericModelDeepSurvival(GenericModel):
         
         return np.stack(outputs)
     
-    
-# %% Overwrite save
 def Save_NN_PyCox(epoch, model, path, best_performance_measure=9999999, optimizer=None, scheduler=None, NT=None, NM=None, NS=None, max_duration=None):
-    # https://pytorch.org/tutorials/recipes/recipes/saving_and_loading_a_general_checkpoint.html
-    # best_performance_measure refers to the performance of the best model so far
-    # so we don't accidentally overwrite it
     
     Out_Dict = {}
     Out_Dict['epoch'] = epoch
