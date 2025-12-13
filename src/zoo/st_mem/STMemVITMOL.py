@@ -212,5 +212,6 @@ def get_STMemVITMOL(num_classes, num_leads = 12, seq_len = 1000, patch_size = 50
         depth = 12,
         heads = 6,
         mlp_dim = 3072,
+        dim_head = 128
     )
     return ST_MEM_ViT_MoL(**model_args)

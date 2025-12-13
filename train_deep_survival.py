@@ -77,7 +77,6 @@ collections.Callable = collections.abc.Callable
 import argparse
 import scipy
 scipy.integrate.simps = simps
-
     
 def train(args):
     start_time = time.time()

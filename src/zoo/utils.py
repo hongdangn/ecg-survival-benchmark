@@ -1207,6 +1207,10 @@ def Gen_Concordance_Brier_No_Bootstrap(surv_df, disc_y_t, disc_y_e, time_points,
     concordance_store_all_ecg, ipcw_brier_store_all_ecg, chance_at_censored_point_all_ecg  = get_surv_briercordance(disc_y_t, disc_y_e, surv_df, time_points, sample_time_points)
     
     hdf5_path = os.path.join(args['Model_Eval_Path'], 'Stored_Model_Output.hdf5')
+    print("Time points:", time_points[time_points != -1])
+    # print("Concordance score:", concordance_store_all_ecg)
+    print ("Medium Concordance score:", np.median(concordance_store_all_ecg[concordance_store_all_ecg != -1]))
+
     Save_to_hdf5(hdf5_path, concordance_store_all_ecg, 'concordance_store_all_ecg')
     Save_to_hdf5(hdf5_path, ipcw_brier_store_all_ecg, 'ipcw_brier_store_all_ecg')
     Save_to_hdf5(hdf5_path, chance_at_censored_point_all_ecg, 'chance_at_censored_point_all_ecg')
@@ -1281,6 +1285,10 @@ def Gen_AUROC_AUPRC(disc_y_t, disc_y_e, surv, time_points, sample_time_points, a
     
     S_AUROC_store, S_AUPRC_store, Chance_At_Age = get_AUROC_AUPRC(disc_y_t, disc_y_e, surv, time_points, sample_time_points)
     
+    print("Time points:", time_points[time_points != -1])
+    print("AUROC scores:", S_AUROC_store[S_AUPRC_store != -1])
+    print("AUPRC scores:", S_AUPRC_store[S_AUPRC_store != -1])
+
     fig1, ax = plt.subplots()
     plt.plot([0,max(sample_time_points)],[.5,.5], '--')
     plt.plot(sample_time_points,Chance_At_Age,'--')

@@ -225,8 +225,8 @@ if __name__ == '__main__':
 
         Model_Name='ECGTransForm',
         pycox_mdl='MTLR',
-        batch_size=8,
-        GPU_minibatch_limit=64,
+        batch_size=1,
+        GPU_minibatch_limit=2,
         optimizer='Adam',
         
         epoch_end=0,

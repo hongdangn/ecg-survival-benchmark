@@ -1,11 +1,13 @@
-python ./train_deep_survival.py \
+python train_deep_survival.py \
     --Train_Folder Code15 \
-    --Model_Name ECGTransForm  \
+    --Model_Name ECGTransForm \
     --Test_Folder Code15 \
-    --batch_size 512 \
-    --epoch_end 15 \
+    --load_pretrained True \
+    --batch_size 4 \
+    --gpu_id 2 \
+    --epoch_end 10 \
     --validate_every 1 \
-    --GPU_minibatch_limit 64 \
+    --GPU_minibatch_limit 2 \
     --Eval_Dataloader Test \
     --Model_Eval_Path /train/code15 \
     --optimizer Adam \

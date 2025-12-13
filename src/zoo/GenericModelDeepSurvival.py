@@ -328,51 +328,34 @@ class GenericModelDeepSurvival(GenericModel):
             pycox_mdl = DeepHitSingle(self.model, self.optimizer, device=self.device, duration_index=self.labtrans.cuts, loss = deephit_loss)
             
         return pycox_mdl
+    
+    def load_pretrained_model(self, model_path):
+        model_dict = self.model.ECG_Model.state_dict()
+        pretrained_model = torch.load(model_path, map_location=self.device)
+        pretrained_weights = {name: param for name, param in pretrained_model.items() if name in model_dict}
 
+        num_pretrained_params = 0
+        for k in pretrained_weights:
+            num_pretrained_params += pretrained_weights[k].numel()
+
+        print(f"Loading {num_pretrained_params} parameters from pretrained model at {model_path}")
+
+        model_dict.update(pretrained_weights)
+        self.model.ECG_Model.load_state_dict(model_dict)
 
     def train(self):
-        Best_Model = copy.deepcopy(self.model)
 
         train_loss = -1
 
-        if self.epoch_end > self.epoch_start:
-            print('Generic_Model_PyCox.Train(): Training Requested. Loading best then last checkpoints.')
-            last_checkpoint_path = os.path.join(self.model_folder_path, 'Checkpoint.pt')
-            best_checkpoint_path = os.path.join(self.model_folder_path, 'Best_Checkpoint.pt')
-            if (os.path.isfile(last_checkpoint_path)):
-                if (os.path.isfile(best_checkpoint_path)):
-                    self.Load('Best')
-                    Best_Model = copy.deepcopy(self.model)
-                    print('Generic_Model_PyCox.Train(): Best Checkpoint loaded and Best model copied.')
-                    self.Load('Last')
-                    print('Generic_Model_PyCox.Train(): Checkpointed model loaded. Will resume training.')
-                    
-                    val_perfs = np.array([k[2] for k in self.Perf])
-                    if (self.early_stop > 0):
-                        if (len(val_perfs) - (np.argmin(val_perfs) + 1 ) ) >= self.early_stop:
-                            # ^ add one: len_val_perfs is num trained epochs (starts at 1), but argmin starts at 0.
-                            print('Generic_Model_PyCox.Train(): Model at early stop. Setting epoch_start to epoch_end to cancel training')
-                            self.epoch_start = self.epoch_end
-                    
-                    if (self.epoch_start == self.epoch_end):
-                        print('Generic_Model_PyCox.Train(): Loaded checkpointed model already trained')
-                    if (self.epoch_start > self.epoch_end):
-                        print('Generic_Model_PyCox.Train(): Requested train epochs > current epochs trained. evaluating.')
-                        self.epoch_start = self.epoch_end
-                else:
-                    print('Generic_Model_PyCox.Train(): FAILED to load best model! Eval may be compromised')
-            else:
-                print('Generic_Model_PyCox.Train(): Last checkpoint unavailable.')
-                
-
-        # Train
+        if self.args.get('pretrained_path', 0):
+            self.load_pretrained_model(self.args['pretrained_path'])
+        
         for epoch in range(self.epoch_start, self.epoch_end):
 
             epoch_start_time = time.time()
             pycox_log = self.pycox_mdl.fit_dataloader(self.train_dataloader, epochs=1, verbose=True, val_dataloader=self.val_dataloader) 
             epoch_end_time = time.time()
             
-            # get train, val loss
             temp = pycox_log.get_measures()
             temp = temp.split(',') 
             train_loss = float(temp[0].split(':')[1])
